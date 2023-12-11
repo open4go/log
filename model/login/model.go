@@ -50,4 +50,6 @@ type Model struct {
 	LogType string `json:"log_type"  bson:"log_type"`
 	// 用户id
 	UserID string `json:"user_id"  bson:"user_id"`
+	// 账号id
+	AccountID string `json:"account_id"  bson:"account_id"`
 }
