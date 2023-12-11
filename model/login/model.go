@@ -44,6 +44,10 @@ type Model struct {
 	RespCode int `json:"resp_code"  bson:"resp_code"`
 	// 操作对象id
 	TargetID string `json:"target_id"  bson:"target_id"`
-	// 操作对象id
+	// 设备号
 	Device string `json:"device"  bson:"device"`
+	// 日志类型
+	LogType string `json:"log_type"  bson:"log_type"`
+	// 用户id
+	UserID string `json:"user_id"  bson:"user_id"`
 }
