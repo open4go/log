@@ -31,6 +31,7 @@ type Model struct {
 	// 创建时（用户上传的数据为空，所以默认可以不传该值)
 	ID primitive.ObjectID `json:"id" bson:"_id,omitempty"`
 
+	Timestamp uint64 `json:"timestamp" bson:"timestamp"`
 	// 用户根据业务需求定义的字段
 	// 客户IP
 	ClientIP string `json:"client_ip" bson:"client_ip"`
