@@ -1,8 +1,6 @@
 package log
 
 import (
-	"encoding/json"
-	"fmt"
 	"github.com/docker/docker/client"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
@@ -13,23 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"time"
 )
-
-// LogEntry represents a single log entry with additional metadata
-type LogEntry struct {
-	File       string `json:"file"`
-	Func       string `json:"func"`
-	Level      string `json:"level"`
-	Msg        string `json:"msg"`
-	Port       string `json:"port"`
-	Prefix     string `json:"prefix"`
-	Server     string `json:"server"`
-	Time       string `json:"time"`
-	Image      string `json:"image"`
-	Container  string `json:"container"`
-	InstanceID string `json:"instance_id"`
-}
 
 // getDockerMetadata fetches the Docker container metadata
 func getDockerMetadata() (string, string, string, error) {
@@ -46,35 +28,6 @@ func getDockerMetadata() (string, string, string, error) {
 	}
 
 	return containerJSON.Config.Image, containerJSON.Name, containerID, nil
-}
-
-func demo() {
-	image, container, instanceID, err := getDockerMetadata()
-	if err != nil {
-		log.Fatalf("Failed to get Docker metadata: %v", err)
-	}
-
-	// Example log entry
-	entry := LogEntry{
-		File:       "init.go:53",
-		Func:       "loadRoutesAndStartServer",
-		Level:      "info",
-		Msg:        "Server is running successfully",
-		Port:       "8080",
-		Prefix:     "/v1/order",
-		Server:     "order-api",
-		Time:       time.Now().Format(time.RFC3339),
-		Image:      image,
-		Container:  container,
-		InstanceID: instanceID,
-	}
-
-	logData, err := json.Marshal(entry)
-	if err != nil {
-		log.Fatalf("Failed to marshal log entry: %v", err)
-	}
-
-	fmt.Println(string(logData))
 }
 
 var logger = logrus.New()
@@ -122,12 +75,15 @@ func Log() *logrus.Entry {
 	image, container, instanceID, err := getDockerMetadata()
 	if err != nil {
 		log.Printf("Failed to get Docker metadata (when run it on local, can ignore this) %v", err)
+		return logger.WithField("file", filename).
+			WithField("func", fn).
+			WithField("server", serverName)
+	} else {
+		return logger.WithField("file", filename).
+			WithField("func", fn).
+			WithField("server", serverName).
+			WithField("image", image).
+			WithField("container", container).
+			WithField("instance", instanceID)
 	}
-
-	return logger.WithField("file", filename).
-		WithField("func", fn).
-		WithField("server", serverName).
-		WithField("image", image).
-		WithField("container", container).
-		WithField("instance", instanceID)
 }
