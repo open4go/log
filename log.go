@@ -121,7 +121,7 @@ func Log() *logrus.Entry {
 	// 获取镜像元数据
 	image, container, instanceID, err := getDockerMetadata()
 	if err != nil {
-		log.Fatalf("Failed to get Docker metadata: %v", err)
+		log.Printf("Failed to get Docker metadata (when run it on local, can ignore this) %v", err)
 	}
 
 	return logger.WithField("file", filename).
