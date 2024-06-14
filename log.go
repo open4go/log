@@ -58,7 +58,7 @@ func Init(logLevel string, output io.Writer) {
 	}
 }
 
-func Log() *logrus.Entry {
+func Log(ctx context.Context) *logrus.Entry {
 	pc, file, line, ok := runtime.Caller(1)
 	if !ok {
 		panic("Could not get context info for logger!")
@@ -71,17 +71,34 @@ func Log() *logrus.Entry {
 	funcName := runtime.FuncForPC(pc).Name()
 	fn := funcName[strings.LastIndex(funcName, ".")+1:]
 
+	logCtx := logger.WithField("file", filename).
+		WithField("func", fn).
+		WithField("server", serverName)
+	// 增加traceid
+	traceID := ctx.Value("traceid")
+	if traceID != "" {
+		logCtx = logCtx.WithField("trace", traceID)
+	}
+	// 增加请求ip
+	ip := ctx.Value("ip")
+	if traceID != "" {
+		logCtx = logCtx.WithField("ip", ip)
+	}
 	// 获取镜像元数据
 	image, container, instanceID, err := getDockerMetadata()
 	if err != nil {
 		log.Printf("Failed to get Docker metadata (when run it on local, can ignore this) %v", err)
-		return logger.WithField("file", filename).
-			WithField("func", fn).
-			WithField("server", serverName)
+		return logCtx
 	} else {
-		return logger.WithField("file", filename).
-			WithField("func", fn).
-			WithField("server", serverName).
+		// 只有容器中运行才能获取到相关信息
+		// 并且运行的容器需要挂着配置 /var/run/docker.sock
+		// 例如:
+		// services:
+		//  member:
+		//    image: r2day/member-api:pro
+		//    volumes:
+		//      - /var/run/docker.sock:/var/run/docker.sock
+		return logCtx.
 			WithField("image", image).
 			WithField("container", container).
 			WithField("instance", instanceID)
