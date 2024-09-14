@@ -81,7 +81,7 @@ func Log(ctx context.Context) *logrus.Entry {
 	}
 	// 增加请求ip
 	ip := ctx.Value("ip")
-	if traceID != "" {
+	if ip != "" {
 		logCtx = logCtx.WithField("ip", ip)
 	}
 	// 获取镜像元数据

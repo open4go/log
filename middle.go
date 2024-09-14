@@ -26,11 +26,15 @@ func RequestLogger() gin.HandlerFunc {
 
 		// Add trace ID, IP, and other fields to the context
 		ctx := c.Request.Context()
-		traceID := c.GetHeader("X-Trace-ID") // Assuming trace ID comes from header
+		traceID := ctx.Value("traceid")
+		if traceID == "" {
+			traceID = c.GetHeader("X-Trace-ID") // Assuming trace ID comes from header
+			ctx = context.WithValue(ctx, "traceid", traceID)
+		}
+
 		ip := c.ClientIP()
 
 		// Attach context values for trace ID and IP
-		ctx = context.WithValue(ctx, "traceid", traceID)
 		ctx = context.WithValue(ctx, "ip", ip)
 
 		currentLatency := duration.Milliseconds()
@@ -43,7 +47,7 @@ func RequestLogger() gin.HandlerFunc {
 			Log(ctx).WithFields(logrus.Fields{
 				"method":      method,
 				"path":        path,
-				"trace":       traceID,
+				"trace":       ctx.Value("traceid"),
 				"status":      statusCode,
 				"max_latency": maxLatency,
 				"latency":     duration.Milliseconds(),
