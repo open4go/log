@@ -67,14 +67,28 @@ func Log(ctx context.Context) *logrus.Entry {
 	serverName := viper.GetString("server.name")
 
 	// 拼接必要字段
-	filename := file[strings.LastIndex(file, "/")+1:] + ":" + strconv.Itoa(line)
+	//filename := file[strings.LastIndex(file, "/")+1:] + ":" + strconv.Itoa(line)
+	// Modify how the filename is extracted to include at least /parent/child.go
+	// Split the file path into its components
+	fileParts := strings.Split(file, "/")
+
+	// Get at least two levels (parent/child.go), or just child.go if less
+	var filename string
+	if len(fileParts) > 1 {
+		filename = strings.Join(fileParts[len(fileParts)-2:], "/") + ":" + strconv.Itoa(line)
+	} else {
+		filename = fileParts[0] + ":" + strconv.Itoa(line)
+	}
+
 	funcName := runtime.FuncForPC(pc).Name()
 	fn := funcName[strings.LastIndex(funcName, ".")+1:]
 
-	logCtx := logger.WithField("file", filename).
+	logCtx := logger.
+		WithField("file", filename).
 		WithField("func", fn).
 		WithField("server", serverName)
 	// 增加traceid
+	// 部分情况下无法获取到
 	traceID := ctx.Value("traceid")
 	if traceID != "" {
 		logCtx = logCtx.WithField("trace", traceID)

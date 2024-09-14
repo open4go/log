@@ -51,7 +51,7 @@ func RequestLogger() gin.HandlerFunc {
 				"status":      statusCode,
 				"max_latency": maxLatency,
 				"latency":     duration.Milliseconds(),
-			}).Warning("current Request has reached latency")
+			}).Warning("current request has reached latency")
 		}
 	}
 }
