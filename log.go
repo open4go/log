@@ -6,7 +6,6 @@ import (
 	"github.com/spf13/viper"
 	"golang.org/x/net/context"
 	"io"
-	"log"
 	"os"
 	"runtime"
 	"strconv"
@@ -101,7 +100,7 @@ func Log(ctx context.Context) *logrus.Entry {
 	// 获取镜像元数据
 	image, container, instanceID, err := getDockerMetadata()
 	if err != nil {
-		log.Printf("Failed to get Docker metadata (when run it on local, can ignore this) %v", err)
+		//log.Printf("Failed to get Docker metadata (when run it on local, can ignore this) %v", err)
 		return logCtx
 	} else {
 		// 只有容器中运行才能获取到相关信息
