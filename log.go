@@ -97,6 +97,11 @@ func Log(ctx context.Context) *logrus.Entry {
 	if ip != "" {
 		logCtx = logCtx.WithField("ip", ip)
 	}
+
+	merchantId := ctx.Value("MERCHANT_KEY")
+	if merchantId != "" {
+		logCtx = logCtx.WithField("merchantId", merchantId)
+	}
 	// 获取镜像元数据
 	image, container, instanceID, err := getDockerMetadata()
 	if err != nil {
