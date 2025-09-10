@@ -3,7 +3,7 @@ module github.com/open4go/log
 go 1.24.0
 
 require (
-	github.com/docker/docker v26.1.4+incompatible
+	github.com/docker/docker v28.0.0+incompatible
 	github.com/gin-gonic/gin v1.8.1
 	github.com/open4go/model v0.0.4
 	github.com/sirupsen/logrus v1.9.3
