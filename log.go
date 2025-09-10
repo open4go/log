@@ -102,6 +102,12 @@ func Log(ctx context.Context) *logrus.Entry {
 	if merchantId != "" {
 		logCtx = logCtx.WithField("merchantId", merchantId)
 	}
+
+	operator := ctx.Value("OPERATOR_KEY")
+	if operator != "" {
+		logCtx = logCtx.WithField("operator", operator)
+	}
+
 	// 获取镜像元数据
 	image, container, instanceID, err := getDockerMetadata()
 	if err != nil {
