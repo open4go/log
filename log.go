@@ -1,10 +1,9 @@
 package log
 
 import (
-	"github.com/docker/docker/client"
+	"context"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
-	"golang.org/x/net/context"
 	"io"
 	"os"
 	"runtime"
@@ -13,40 +12,47 @@ import (
 	"strings"
 )
 
-// getDockerMetadata fetches the Docker container metadata
-func getDockerMetadata() (string, string, string, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
-	if err != nil {
-		return "", "", "", err
-	}
-
-	ctx := context.Background()
-	containerID := os.Getenv("HOSTNAME")
-	containerJSON, err := cli.ContainerInspect(ctx, containerID)
-	if err != nil {
-		return "", "", "", err
-	}
-
-	return containerJSON.Config.Image, containerJSON.Name, containerID, nil
-}
-
 var logger = logrus.New()
 
-// Init 在main函数中必须初始化
+// =======================
+// 构建 & 实例元信息
+// =======================
+
+type buildMeta struct {
+	Image     string
+	GitCommit string
+	GitBranch string
+	BuildTime string
+	Instance  string
+}
+
+var meta = buildMeta{
+	Image:     os.Getenv("IMAGE_TAG"),  // 例如 product-api:v1.2.3
+	GitCommit: os.Getenv("GIT_COMMIT"), // git rev-parse --short HEAD
+	GitBranch: os.Getenv("GIT_BRANCH"), // main / release
+	BuildTime: os.Getenv("BUILD_TIME"), // 2025-12-28T15:00:00Z
+	Instance:  os.Getenv("HOSTNAME"),   // 容器实例ID
+}
+
+// =======================
+// 初始化
+// =======================
+
+// Init 在 main 函数中调用
 func Init(logLevel string, output io.Writer) {
 	if output != nil {
 		logger.SetOutput(output)
 	} else {
-		// 输出到终端
 		logger.SetOutput(os.Stdout)
 	}
-	// 强制使用json日志格式
-	logger.SetFormatter(&logrus.JSONFormatter{})
-	// 设置日志级别
+
+	logger.SetFormatter(&logrus.JSONFormatter{
+		TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
+	})
+
 	switch logLevel {
 	case "debug":
 		logger.SetLevel(logrus.DebugLevel)
-	case "test":
 	case "info":
 		logger.SetLevel(logrus.InfoLevel)
 	case "warn":
@@ -58,52 +64,22 @@ func Init(logLevel string, output io.Writer) {
 	}
 }
 
-// getStackTrace 获取完整的调用栈信息
-func getStackTrace() string {
-	// 获取当前goroutine的堆栈信息
-	stack := debug.Stack()
-	return string(stack)
-}
+// =======================
+// 公共日志入口
+// =======================
 
-// getCallerInfo 获取调用者信息
-func getCallerInfo(skip int) (string, string) {
-	pc, file, line, ok := runtime.Caller(skip)
-	if !ok {
-		return "unknown", "0"
-	}
-
-	// 获取文件名（包含父目录）
-	fileParts := strings.Split(file, "/")
-	var filename string
-	if len(fileParts) > 1 {
-		filename = strings.Join(fileParts[len(fileParts)-2:], "/") + ":" + strconv.Itoa(line)
-	} else {
-		filename = fileParts[0] + ":" + strconv.Itoa(line)
-	}
-
-	// 获取函数名
-	funcName := runtime.FuncForPC(pc).Name()
-	fn := funcName[strings.LastIndex(funcName, ".")+1:]
-
-	return filename, fn
-}
-
-// Log 获取日志记录器，默认不包含堆栈信息
+// Log 普通日志（无堆栈）
 func Log(ctx context.Context) *logrus.Entry {
 	filename, fn := getCallerInfo(2)
 	return getBaseEntry(ctx, filename, fn)
 }
 
-// ErrorWithStack 专门用于错误日志，包含堆栈信息
+// ErrorWithStack 错误日志（带堆栈）
 func ErrorWithStack(ctx context.Context, err error, args ...interface{}) {
 	filename, fn := getCallerInfo(2)
-	entry := getBaseEntry(ctx, filename, fn)
+	entry := getBaseEntry(ctx, filename, fn).
+		WithField("stacktrace", getStackTrace())
 
-	// 添加堆栈信息
-	stack := getStackTrace()
-	entry = entry.WithField("stacktrace", stack)
-
-	// 记录错误
 	if len(args) == 0 {
 		entry.Error(err)
 	} else {
@@ -111,86 +87,80 @@ func ErrorWithStack(ctx context.Context, err error, args ...interface{}) {
 	}
 }
 
-// ErrorfWithStack 格式化错误日志，包含堆栈信息
+// ErrorfWithStack 格式化错误日志（带堆栈）
 func ErrorfWithStack(ctx context.Context, err error, format string, args ...interface{}) {
 	filename, fn := getCallerInfo(2)
-	entry := getBaseEntry(ctx, filename, fn)
+	entry := getBaseEntry(ctx, filename, fn).
+		WithField("stacktrace", getStackTrace())
 
-	// 添加堆栈信息
-	stack := getStackTrace()
-	entry = entry.WithField("stacktrace", stack)
-
-	// 记录错误
 	entry.WithError(err).Errorf(format, args...)
 }
 
-// getBaseEntry 获取基础日志条目，包含公共字段
+// =======================
+// 内部工具函数
+// =======================
+
 func getBaseEntry(ctx context.Context, filename, fn string) *logrus.Entry {
 	serverName := viper.GetString("server.name")
 
 	logCtx := logger.
+		WithField("server", serverName).
 		WithField("file", filename).
-		WithField("func", fn).
-		WithField("server", serverName)
+		WithField("func", fn)
 
-	// 增加traceid
-	traceID := ctx.Value("traceid")
-	if traceID != "" {
-		logCtx = logCtx.WithField("trace", traceID)
+	// ===== 请求上下文 =====
+	if ctx != nil {
+		if traceID := ctx.Value("traceid"); traceID != "" {
+			logCtx = logCtx.WithField("trace", traceID)
+		}
+		if ip := ctx.Value("ip"); ip != "" {
+			logCtx = logCtx.WithField("ip", ip)
+		}
+		if merchantId := ctx.Value("MERCHANT_KEY"); merchantId != "" {
+			logCtx = logCtx.WithField("merchantId", merchantId)
+		}
+		if operator := ctx.Value("OPERATOR_KEY"); operator != "" {
+			logCtx = logCtx.WithField("operator", operator)
+		}
 	}
 
-	// 增加请求ip
-	ip := ctx.Value("ip")
-	if ip != "" {
-		logCtx = logCtx.WithField("ip", ip)
+	// ===== 构建 & 实例信息（稳定）=====
+	if meta.Image != "" {
+		logCtx = logCtx.WithField("image", meta.Image)
+	}
+	if meta.GitCommit != "" {
+		logCtx = logCtx.WithField("git_commit", meta.GitCommit)
+	}
+	if meta.GitBranch != "" {
+		logCtx = logCtx.WithField("git_branch", meta.GitBranch)
+	}
+	if meta.BuildTime != "" {
+		logCtx = logCtx.WithField("build_time", meta.BuildTime)
+	}
+	if meta.Instance != "" {
+		logCtx = logCtx.WithField("instance", meta.Instance)
 	}
 
-	merchantId := ctx.Value("MERCHANT_KEY")
-	if merchantId != "" {
-		logCtx = logCtx.WithField("merchantId", merchantId)
-	}
-
-	operator := ctx.Value("OPERATOR_KEY")
-	if operator != "" {
-		logCtx = logCtx.WithField("operator", operator)
-	}
-
-	// 获取镜像元数据
-	image, container, instanceID, err := getDockerMetadata()
-	if err != nil {
-		//log.Printf("Failed to get Docker metadata (when run it on local, can ignore this) %v", err)
-		return logCtx
-	} else {
-		// 只有容器中运行才能获取到相关信息
-		// 并且运行的容器需要挂着配置 /var/run/docker.sock
-		return logCtx.
-			WithField("image", image).
-			WithField("container", container).
-			WithField("instance", instanceID)
-	}
+	return logCtx
 }
 
-// 可以添加一个钩子，自动为所有error级别日志添加堆栈信息
-func init() {
-	// 添加自定义钩子，当记录error级别日志时自动添加堆栈信息
-	// 注意：这种方式会影响所有error级别日志，包括非error方法记录的错误
-	// 可以根据需求决定是否启用
-
-	// logger.AddHook(&errorStackHook{})
-}
-
-// errorStackHook 错误堆栈钩子，自动为error级别日志添加堆栈信息
-type errorStackHook struct{}
-
-func (h *errorStackHook) Levels() []logrus.Level {
-	return []logrus.Level{logrus.ErrorLevel, logrus.FatalLevel, logrus.PanicLevel}
-}
-
-func (h *errorStackHook) Fire(entry *logrus.Entry) error {
-	// 只有在没有stacktrace字段时才添加
-	if _, ok := entry.Data["stacktrace"]; !ok {
-		stack := getStackTrace()
-		entry.Data["stacktrace"] = stack
+// 获取调用者信息
+func getCallerInfo(skip int) (string, string) {
+	pc, file, line, ok := runtime.Caller(skip)
+	if !ok {
+		return "unknown", "unknown"
 	}
-	return nil
+
+	fileParts := strings.Split(file, "/")
+	filename := fileParts[len(fileParts)-1] + ":" + strconv.Itoa(line)
+
+	funcName := runtime.FuncForPC(pc).Name()
+	fn := funcName[strings.LastIndex(funcName, ".")+1:]
+
+	return filename, fn
+}
+
+// 获取堆栈
+func getStackTrace() string {
+	return string(debug.Stack())
 }
