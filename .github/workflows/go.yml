@@ -15,7 +15,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
-          go-version: '1.24'
+          go-version: '1.25.9'
 
       # 安全检查：Govulncheck 依赖漏洞扫描
       - name: Install govulncheck
