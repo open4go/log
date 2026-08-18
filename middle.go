@@ -1,57 +1,118 @@
 package log
 
 import (
-	"context"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 	"time"
 )
 
-// RequestLogger logs the request time and other relevant details
+// skipAccessLogPaths are infrastructure endpoints that should not emit
+// an access line on every probe.
+var skipAccessLogPaths = map[string]struct{}{
+	"/healthz":     {},
+	"/readyz":      {},
+	"/health":      {},
+	"/ping":        {},
+	"/favicon.ico": {},
+}
+
+// RequestLogger writes one access log per request and a warning when
+// latency exceeds server.maxLatency (milliseconds).
 func RequestLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		startTime := time.Now()
-
-		// Process the request
 		c.Next()
 
-		// Calculate request duration
-		duration := time.Since(startTime)
-
-		// Get request details
 		path := c.Request.URL.Path
+		if _, skip := skipAccessLogPaths[path]; skip {
+			return
+		}
+		// metrics endpoints are prefixed per service
+		if len(path) >= 8 && path[len(path)-8:] == "/metrics" {
+			return
+		}
+
+		duration := time.Since(startTime)
 		method := c.Request.Method
 		statusCode := c.Writer.Status()
 
-		// Add trace ID, IP, and other fields to the context
 		ctx := c.Request.Context()
-		traceID := ctx.Value("traceid")
+		traceID := TraceID(ctx)
 		if traceID == "" {
-			traceID = c.GetHeader("X-Trace-ID") // Assuming trace ID comes from header
-			ctx = context.WithValue(ctx, "traceid", traceID)
+			if v, ok := c.Get("RequestID"); ok {
+				if s, ok := v.(string); ok {
+					traceID = s
+				}
+			}
+		}
+		if traceID == "" {
+			traceID = c.GetHeader("X-Trace-ID")
+		}
+		if traceID == "" {
+			traceID = c.GetHeader("X-Request-ID")
+		}
+
+		ip := ClientIP(ctx)
+		if ip == "" {
+			ip = c.ClientIP()
+		}
+
+		ctx = Inject(ctx, traceID, ip)
+
+		fields := logrus.Fields{
+			"method":  method,
+			"path":    path,
+			"status":  statusCode,
+			"latency": duration.Milliseconds(),
+			"ip":      ip,
+			"trace":   traceID,
+		}
+		if bytes := c.Writer.Size(); bytes >= 0 {
+			fields["bytes"] = bytes
+		}
+
+		entry := Log(ctx).WithFields(fields)
+
+		maxLatency := viper.GetInt64("server.maxLatency")
+		if maxLatency > 0 && duration.Milliseconds() > maxLatency {
+			entry.WithField("max_latency", maxLatency).
+				Warning("request exceeded max latency")
+			return
+		}
+
+		switch {
+		case statusCode >= 500:
+			entry.Error("request completed")
+		case statusCode >= 400:
+			entry.Warning("request completed")
+		default:
+			entry.Info("request completed")
+		}
+	}
+}
+
+// TraceMiddleware assigns a request id (reusing inbound X-Request-ID /
+// X-Trace-ID when present), writes it into the request context, Gin
+// context, and response header so subsequent Log(ctx) calls correlate.
+func TraceMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		traceID := c.GetHeader("X-Request-ID")
+		if traceID == "" {
+			traceID = c.GetHeader("X-Trace-ID")
+		}
+		if traceID == "" {
+			traceID = NewTraceID()
 		}
 
 		ip := c.ClientIP()
+		ctx := Inject(c.Request.Context(), traceID, ip)
+		c.Request = c.Request.WithContext(ctx)
 
-		// Attach context values for trace ID and IP
-		ctx = context.WithValue(ctx, "ip", ip)
+		c.Set("RequestID", traceID)
+		c.Set("log", Log(ctx))
+		c.Header("X-Request-ID", traceID)
 
-		currentLatency := duration.Milliseconds()
-		maxLatency := viper.GetInt64("server.maxLatency")
-
-		// 如果一个请求时间超过设定的最大时长则应该认为是异常情况
-		// 因此打印输出日志便于排查问题
-		if currentLatency > maxLatency {
-			// Log the request details with the custom logger
-			Log(ctx).WithFields(logrus.Fields{
-				"method":      method,
-				"path":        path,
-				"trace":       ctx.Value("traceid"),
-				"status":      statusCode,
-				"max_latency": maxLatency,
-				"latency":     duration.Milliseconds(),
-			}).Warning("current request has reached latency")
-		}
+		c.Next()
 	}
 }

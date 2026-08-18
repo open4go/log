@@ -2,21 +2,18 @@ package log
 
 import (
 	"context"
-	"github.com/sirupsen/logrus"
-	"github.com/spf13/viper"
 	"io"
 	"os"
 	"runtime"
 	"runtime/debug"
 	"strconv"
 	"strings"
+
+	"github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 )
 
 var logger = logrus.New()
-
-// =======================
-// 构建 & 实例元信息
-// =======================
 
 type buildMeta struct {
 	Image     string
@@ -34,10 +31,8 @@ var meta = buildMeta{
 	Instance:  os.Getenv("HOSTNAME"),
 }
 
-// =======================
-// 初始化
-// =======================
-
+// Init configures the process-wide JSON logger. Call once from main.
+// logLevel: debug | test | info | warn | error (unknown falls back to info).
 func Init(logLevel string, output io.Writer) {
 	if output != nil {
 		logger.SetOutput(output)
@@ -49,12 +44,12 @@ func Init(logLevel string, output io.Writer) {
 		TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
 	})
 
-	switch logLevel {
-	case "debug":
+	switch strings.ToLower(logLevel) {
+	case "debug", "test":
 		logger.SetLevel(logrus.DebugLevel)
 	case "info":
 		logger.SetLevel(logrus.InfoLevel)
-	case "warn":
+	case "warn", "warning":
 		logger.SetLevel(logrus.WarnLevel)
 	case "error":
 		logger.SetLevel(logrus.ErrorLevel)
@@ -63,17 +58,42 @@ func Init(logLevel string, output io.Writer) {
 	}
 }
 
-// =======================
-// 公共日志入口（优化后）
-// =======================
+// Logger returns the process-wide logrus logger.
+func Logger() *logrus.Logger {
+	return logger
+}
 
-// Log 普通日志（Info / Debug 级别，不带堆栈）
+// Log is the common entry for Info / Debug / Warn / Error.
+// It attaches server, caller, trace, ip, merchant and operator when present.
+// Do not call Fatal from request handlers — Fatal exits the process.
 func Log(ctx context.Context) *logrus.Entry {
 	filename, fn := getCallerInfo(2)
 	return getBaseEntry(ctx, filename, fn)
 }
 
-// Error 错误日志（自动带完整堆栈）
+// ErrorWithStack is an alias of Error, kept for callers compiled against
+// older versions of this package.
+func ErrorWithStack(ctx context.Context, err error, args ...interface{}) {
+	filename, fn := getCallerInfo(2)
+	entry := getBaseEntry(ctx, filename, fn).
+		WithField("stacktrace", getStackTrace())
+	if len(args) == 0 {
+		entry.Error(err)
+		return
+	}
+	entry.WithError(err).Error(args...)
+}
+
+// ErrorfWithStack is an alias of Errorf, kept for older callers.
+func ErrorfWithStack(ctx context.Context, err error, format string, args ...interface{}) {
+	filename, fn := getCallerInfo(2)
+	getBaseEntry(ctx, filename, fn).
+		WithField("stacktrace", getStackTrace()).
+		WithError(err).
+		Errorf(format, args...)
+}
+
+// Error writes an error log with a stack trace.
 func Error(ctx context.Context, err error, args ...interface{}) {
 	filename, fn := getCallerInfo(2)
 	entry := getBaseEntry(ctx, filename, fn).
@@ -81,21 +101,21 @@ func Error(ctx context.Context, err error, args ...interface{}) {
 
 	if len(args) == 0 {
 		entry.Error(err)
-	} else {
-		entry.WithError(err).Error(args...)
+		return
 	}
+	entry.WithError(err).Error(args...)
 }
 
-// Errorf 格式化错误日志（自动带完整堆栈）
+// Errorf writes a formatted error log with a stack trace.
 func Errorf(ctx context.Context, err error, format string, args ...interface{}) {
 	filename, fn := getCallerInfo(2)
-	entry := getBaseEntry(ctx, filename, fn).
-		WithField("stacktrace", getStackTrace())
-
-	entry.WithError(err).Errorf(format, args...)
+	getBaseEntry(ctx, filename, fn).
+		WithField("stacktrace", getStackTrace()).
+		WithError(err).
+		Errorf(format, args...)
 }
 
-// WarnWithStack 警告日志（按需带堆栈）
+// WarnWithStack writes a warning with a stack trace.
 func WarnWithStack(ctx context.Context, msg interface{}, args ...interface{}) {
 	filename, fn := getCallerInfo(2)
 	entry := getBaseEntry(ctx, filename, fn).
@@ -103,23 +123,18 @@ func WarnWithStack(ctx context.Context, msg interface{}, args ...interface{}) {
 
 	if len(args) == 0 {
 		entry.Warn(msg)
-	} else {
-		entry.WithFields(logrus.Fields{"details": args}).Warn(msg)
+		return
 	}
+	entry.WithFields(logrus.Fields{"details": args}).Warn(msg)
 }
 
-// WarnfWithStack 格式化警告日志（按需带堆栈）
+// WarnfWithStack writes a formatted warning with a stack trace.
 func WarnfWithStack(ctx context.Context, format string, args ...interface{}) {
 	filename, fn := getCallerInfo(2)
-	entry := getBaseEntry(ctx, filename, fn).
-		WithField("stacktrace", getStackTrace())
-
-	entry.Warnf(format, args...)
+	getBaseEntry(ctx, filename, fn).
+		WithField("stacktrace", getStackTrace()).
+		Warnf(format, args...)
 }
-
-// =======================
-// 内部工具函数
-// =======================
 
 func getBaseEntry(ctx context.Context, filename, fn string) *logrus.Entry {
 	serverName := viper.GetString("server.name")
@@ -129,23 +144,21 @@ func getBaseEntry(ctx context.Context, filename, fn string) *logrus.Entry {
 		WithField("file", filename).
 		WithField("func", fn)
 
-	// 请求上下文
 	if ctx != nil {
-		if traceID := ctx.Value("traceid"); traceID != nil && traceID != "" {
+		if traceID := TraceID(ctx); traceID != "" {
 			logCtx = logCtx.WithField("trace", traceID)
 		}
-		if ip := ctx.Value("ip"); ip != nil && ip != "" {
+		if ip := ClientIP(ctx); ip != "" {
 			logCtx = logCtx.WithField("ip", ip)
 		}
-		if merchantId := ctx.Value("MERCHANT_KEY"); merchantId != nil && merchantId != "" {
+		if merchantId := ctxString(ctx, merchantCtxKey); merchantId != "" {
 			logCtx = logCtx.WithField("merchantId", merchantId)
 		}
-		if operator := ctx.Value("OPERATOR_KEY"); operator != nil && operator != "" {
+		if operator := ctxString(ctx, operatorCtxKey); operator != "" {
 			logCtx = logCtx.WithField("operator", operator)
 		}
 	}
 
-	// 构建 & 实例信息
 	if meta.Image != "" {
 		logCtx = logCtx.WithField("image", meta.Image)
 	}
