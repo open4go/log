@@ -4,9 +4,6 @@ import (
 	"context"
 	"io"
 	"os"
-	"runtime"
-	"runtime/debug"
-	"strconv"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -31,6 +28,19 @@ var meta = buildMeta{
 	Instance:  os.Getenv("HOSTNAME"),
 }
 
+func init() {
+	logger.SetFormatter(jsonFormatter())
+	logger.SetOutput(os.Stdout)
+	logger.AddHook(locationHook{})
+}
+
+func jsonFormatter() logrus.Formatter {
+	return &logrus.JSONFormatter{
+		TimestampFormat:   "2006-01-02T15:04:05.000Z07:00",
+		DisableHTMLEscape: true,
+	}
+}
+
 // Init configures the process-wide JSON logger. Call once from main.
 // logLevel: debug | test | info | warn | error (unknown falls back to info).
 func Init(logLevel string, output io.Writer) {
@@ -40,9 +50,8 @@ func Init(logLevel string, output io.Writer) {
 		logger.SetOutput(os.Stdout)
 	}
 
-	logger.SetFormatter(&logrus.JSONFormatter{
-		TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
-	})
+	logger.SetFormatter(jsonFormatter())
+	logger.SetReportCaller(false)
 
 	switch strings.ToLower(logLevel) {
 	case "debug", "test":
@@ -64,63 +73,47 @@ func Logger() *logrus.Logger {
 }
 
 // Log is the common entry for Info / Debug / Warn / Error.
-// It attaches server, caller, trace, ip, merchant and operator when present.
+// It attaches server, trace, ip, merchant and operator when present.
+// Caller file/func/line are filled when the line is written.
+// Error-level lines also get a cleaned stacktrace.
 // Do not call Fatal from request handlers — Fatal exits the process.
 func Log(ctx context.Context) *logrus.Entry {
-	filename, fn := getCallerInfo(2)
-	return getBaseEntry(ctx, filename, fn)
+	return getBaseEntry(ctx)
 }
 
 // ErrorWithStack is an alias of Error, kept for callers compiled against
 // older versions of this package.
 func ErrorWithStack(ctx context.Context, err error, args ...interface{}) {
-	filename, fn := getCallerInfo(2)
-	entry := getBaseEntry(ctx, filename, fn).
-		WithField("stacktrace", getStackTrace())
-	if len(args) == 0 {
-		entry.Error(err)
-		return
-	}
-	entry.WithError(err).Error(args...)
+	Error(ctx, err, args...)
 }
 
 // ErrorfWithStack is an alias of Errorf, kept for older callers.
 func ErrorfWithStack(ctx context.Context, err error, format string, args ...interface{}) {
-	filename, fn := getCallerInfo(2)
-	getBaseEntry(ctx, filename, fn).
-		WithField("stacktrace", getStackTrace()).
-		WithError(err).
-		Errorf(format, args...)
+	Errorf(ctx, err, format, args...)
 }
 
-// Error writes an error log with a stack trace.
+// Error writes an error log with caller location and a cleaned stack trace.
 func Error(ctx context.Context, err error, args ...interface{}) {
-	filename, fn := getCallerInfo(2)
-	entry := getBaseEntry(ctx, filename, fn).
-		WithField("stacktrace", getStackTrace())
-
+	entry := errorEntry(ctx, err)
 	if len(args) == 0 {
-		entry.Error(err)
+		if err != nil {
+			entry.Error(err)
+			return
+		}
+		entry.Error("error")
 		return
 	}
-	entry.WithError(err).Error(args...)
+	entry.Error(args...)
 }
 
-// Errorf writes a formatted error log with a stack trace.
+// Errorf writes a formatted error log with caller location and a cleaned stack trace.
 func Errorf(ctx context.Context, err error, format string, args ...interface{}) {
-	filename, fn := getCallerInfo(2)
-	getBaseEntry(ctx, filename, fn).
-		WithField("stacktrace", getStackTrace()).
-		WithError(err).
-		Errorf(format, args...)
+	errorEntry(ctx, err).Errorf(format, args...)
 }
 
 // WarnWithStack writes a warning with a stack trace.
 func WarnWithStack(ctx context.Context, msg interface{}, args ...interface{}) {
-	filename, fn := getCallerInfo(2)
-	entry := getBaseEntry(ctx, filename, fn).
-		WithField("stacktrace", getStackTrace())
-
+	entry := getBaseEntry(ctx).WithField(wantStackField, true)
 	if len(args) == 0 {
 		entry.Warn(msg)
 		return
@@ -130,69 +123,49 @@ func WarnWithStack(ctx context.Context, msg interface{}, args ...interface{}) {
 
 // WarnfWithStack writes a formatted warning with a stack trace.
 func WarnfWithStack(ctx context.Context, format string, args ...interface{}) {
-	filename, fn := getCallerInfo(2)
-	getBaseEntry(ctx, filename, fn).
-		WithField("stacktrace", getStackTrace()).
-		Warnf(format, args...)
+	getBaseEntry(ctx).WithField(wantStackField, true).Warnf(format, args...)
 }
 
-func getBaseEntry(ctx context.Context, filename, fn string) *logrus.Entry {
-	serverName := viper.GetString("server.name")
+func errorEntry(ctx context.Context, err error) *logrus.Entry {
+	entry := getBaseEntry(ctx)
+	if err != nil {
+		entry = entry.WithError(err)
+	}
+	return entry
+}
 
-	logCtx := logger.
-		WithField("server", serverName).
-		WithField("file", filename).
-		WithField("func", fn)
+func getBaseEntry(ctx context.Context) *logrus.Entry {
+	fields := make(logrus.Fields, 12)
+	fields["server"] = viper.GetString("server.name")
 
-	if ctx != nil {
-		if traceID := TraceID(ctx); traceID != "" {
-			logCtx = logCtx.WithField("trace", traceID)
-		}
-		if ip := ClientIP(ctx); ip != "" {
-			logCtx = logCtx.WithField("ip", ip)
-		}
-		if merchantId := ctxString(ctx, merchantCtxKey); merchantId != "" {
-			logCtx = logCtx.WithField("merchantId", merchantId)
-		}
-		if operator := ctxString(ctx, operatorCtxKey); operator != "" {
-			logCtx = logCtx.WithField("operator", operator)
-		}
+	if traceID := TraceID(ctx); traceID != "" {
+		fields["trace"] = traceID
+	}
+	if ip := ClientIP(ctx); ip != "" {
+		fields["ip"] = ip
+	}
+	if merchantId := ctxString(ctx, merchantCtxKey); merchantId != "" {
+		fields["merchantId"] = merchantId
+	}
+	if operator := ctxString(ctx, operatorCtxKey); operator != "" {
+		fields["operator"] = operator
 	}
 
 	if meta.Image != "" {
-		logCtx = logCtx.WithField("image", meta.Image)
+		fields["image"] = meta.Image
 	}
 	if meta.GitCommit != "" {
-		logCtx = logCtx.WithField("git_commit", meta.GitCommit)
+		fields["git_commit"] = meta.GitCommit
 	}
 	if meta.GitBranch != "" {
-		logCtx = logCtx.WithField("git_branch", meta.GitBranch)
+		fields["git_branch"] = meta.GitBranch
 	}
 	if meta.BuildTime != "" {
-		logCtx = logCtx.WithField("build_time", meta.BuildTime)
+		fields["build_time"] = meta.BuildTime
 	}
 	if meta.Instance != "" {
-		logCtx = logCtx.WithField("instance", meta.Instance)
+		fields["instance"] = meta.Instance
 	}
 
-	return logCtx
-}
-
-func getCallerInfo(skip int) (string, string) {
-	pc, file, line, ok := runtime.Caller(skip)
-	if !ok {
-		return "unknown", "unknown"
-	}
-
-	fileParts := strings.Split(file, "/")
-	filename := fileParts[len(fileParts)-1] + ":" + strconv.Itoa(line)
-
-	funcName := runtime.FuncForPC(pc).Name()
-	fn := funcName[strings.LastIndex(funcName, ".")+1:]
-
-	return filename, fn
-}
-
-func getStackTrace() string {
-	return string(debug.Stack())
+	return logger.WithFields(fields)
 }

@@ -1,10 +1,11 @@
 package log
 
 import (
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
-	"time"
 )
 
 // skipAccessLogPaths are infrastructure endpoints that should not emit
@@ -61,12 +62,13 @@ func RequestLogger() gin.HandlerFunc {
 		ctx = Inject(ctx, traceID, ip)
 
 		fields := logrus.Fields{
-			"method":  method,
-			"path":    path,
-			"status":  statusCode,
-			"latency": duration.Milliseconds(),
-			"ip":      ip,
-			"trace":   traceID,
+			"method":       method,
+			"path":         path,
+			"status":       statusCode,
+			"latency":      duration.Milliseconds(),
+			"ip":           ip,
+			"trace":        traceID,
+			skipStackField: true,
 		}
 		if bytes := c.Writer.Size(); bytes >= 0 {
 			fields["bytes"] = bytes
