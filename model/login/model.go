@@ -52,4 +52,16 @@ type Model struct {
 	UserID string `json:"user_id"  bson:"user_id"`
 	// 账号id
 	AccountID string `json:"account_id"  bson:"account_id"`
+	// UserName 登录账号显示名
+	UserName string `json:"user_name" bson:"user_name"`
+	// Phone 登录使用的手机号
+	Phone string `json:"phone" bson:"phone"`
+	// LoginType 登录类型
+	LoginType string `json:"login_type" bson:"login_type"`
+	// MerchantID 登录选择的租户
+	MerchantID string `json:"merchant_id" bson:"merchant_id"`
+	// TraceID 请求追踪 id
+	TraceID string `json:"trace_id" bson:"trace_id"`
+	// UserAgent 浏览器 / 客户端
+	UserAgent string `json:"user_agent" bson:"user_agent"`
 }

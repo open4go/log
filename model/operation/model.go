@@ -57,4 +57,28 @@ type Model struct {
 	Before string `json:"before"  bson:"before"`
 	// 修改后
 	After string `json:"after"  bson:"after"`
+	// Summary 可读摘要，例如「张三 更新了 会员 李四」
+	Summary string `json:"summary" bson:"summary"`
+	// Resource 资源编码，例如 member / admin_account / role
+	Resource string `json:"resource" bson:"resource"`
+	// ResourceLabel 资源中文名，例如 会员 / 管理账号（避免与 ResourceName() 方法冲突）
+	ResourceLabel string `json:"resource_label" bson:"resource_label"`
+	// Action 业务动作：create / update / delete / notify
+	Action string `json:"action" bson:"action"`
+	// RequestURI 实际请求路径（已脱敏）
+	RequestURI string `json:"request_uri" bson:"request_uri"`
+	// UserAgent 浏览器 / 客户端
+	UserAgent string `json:"user_agent" bson:"user_agent"`
+	// MerchantID 操作发生的租户
+	MerchantID string `json:"merchant_id" bson:"merchant_id"`
+	// LatencyMs 接口耗时
+	LatencyMs int64 `json:"latency_ms" bson:"latency_ms"`
+	// TraceID 请求追踪 id，与应用日志关联
+	TraceID string `json:"trace_id" bson:"trace_id"`
+	// TargetName 被操作对象的可读名称（会员名、账号名、手机号等）
+	TargetName string `json:"target_name" bson:"target_name"`
+	// OperatorPhone 操作人手机号
+	OperatorPhone string `json:"operator_phone" bson:"operator_phone"`
+	// LoginType 操作人登录类型（admin / member 等）
+	LoginType string `json:"login_type" bson:"login_type"`
 }
