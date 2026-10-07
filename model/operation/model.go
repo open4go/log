@@ -59,9 +59,13 @@ type Model struct {
 	After string `json:"after"  bson:"after"`
 	// Summary 可读摘要，例如「张三 更新了 会员 李四」
 	Summary string `json:"summary" bson:"summary"`
-	// Resource 资源编码，例如 member / admin_account / role
+	// Resource 资源编码，例如 member / admin_account / role。用量统计仍用这一层。
 	Resource string `json:"resource" bson:"resource"`
-	// ResourceLabel 资源中文名，例如 会员 / 管理账号（避免与 ResourceName() 方法冲突）
+	// Service x9 服务编码，例如 client、member、order、auth。展示时按语言翻译，不写死中文。
+	Service string `json:"service" bson:"service"`
+	// Module 服务下的具体模块，例如 launch、account、commands。
+	Module string `json:"module" bson:"module"`
+	// ResourceLabel 默认中文名，例如「终端管理 · 启动配置」（避免与 ResourceName() 方法冲突）
 	ResourceLabel string `json:"resource_label" bson:"resource_label"`
 	// Action 业务动作：create / update / delete / notify
 	Action string `json:"action" bson:"action"`
