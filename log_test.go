@@ -205,8 +205,8 @@ func TestErrorfCallerAndMessage(t *testing.T) {
 func TestNilContextDoesNotPanic(t *testing.T) {
 	var buf bytes.Buffer
 	Init("debug", &buf)
-	Log(nil).Info("ok")
-	Error(nil, nil)
+	Log(nil).Info("ok") //nolint:staticcheck // SA1012: test intentionally passes nil
+	Error(nil, nil) //nolint:staticcheck // SA1012: test intentionally passes nil
 }
 
 func TestHTMLNotEscaped(t *testing.T) {

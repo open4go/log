@@ -45,7 +45,7 @@ func TestLogIncludesTraceFromLegacyKey(t *testing.T) {
 	Init("debug", &buf)
 	viper.Set("server.name", "store-api")
 
-	ctx := context.WithValue(context.Background(), "traceid", "legacy-trace")
+	ctx := context.WithValue(context.Background(), "traceid", "legacy-trace") //nolint:staticcheck // SA1029: test covers the legacy plain-string key
 	Log(ctx).Info("hello")
 
 	var rec map[string]any

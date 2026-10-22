@@ -42,7 +42,7 @@ func WithTraceID(ctx context.Context, traceID string) context.Context {
 		return ctx
 	}
 	ctx = context.WithValue(ctx, TraceIDKey, traceID)
-	ctx = context.WithValue(ctx, legacyTraceIDKey, traceID)
+	ctx = context.WithValue(ctx, legacyTraceIDKey, traceID) //nolint:staticcheck // SA1029: legacy plain-string key kept for backward compatibility
 	return ctx
 }
 
@@ -55,7 +55,7 @@ func WithIP(ctx context.Context, ip string) context.Context {
 		return ctx
 	}
 	ctx = context.WithValue(ctx, IPKey, ip)
-	ctx = context.WithValue(ctx, legacyIPKey, ip)
+	ctx = context.WithValue(ctx, legacyIPKey, ip) //nolint:staticcheck // SA1029: legacy plain-string key kept for backward compatibility
 	return ctx
 }
 

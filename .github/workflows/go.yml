@@ -2,37 +2,65 @@ name: Go
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.25.9'
+          go-version: "1.26.10"
+          cache: true
 
-      # 安全检查：Govulncheck 依赖漏洞扫描
+      - name: Show Go version
+        run: |
+          go version
+          go env GOPATH
+          go env GOROOT
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify dependencies
+        run: go mod verify
+
+      # 安全检查
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
 
       - name: Run govulncheck
-        run: govulncheck -test=false $(go list ./... | grep -v vendor | grep -v 'opt/hostedtoolcache/go')
+        run: |
+          "$(go env GOPATH)/bin/govulncheck" -test=false ./...
+
+      # 代码质量检查
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://golangci-lint.run/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" v2.13.2
+
+      - name: Show golangci-lint version
+        run: |
+          "$(go env GOPATH)/bin/golangci-lint" version
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest          # 或指定具体版本如 v1.64.5
-          skip-cache: false
-          args: --skip-dirs vendor --skip-dirs third_party ./...
+        run: |
+          "$(go env GOPATH)/bin/golangci-lint" run --timeout=10m
 
+      # Build
       - name: Build
-        run: go build -v ./...
+        run: |
+          go build -v ./...
 
+      # Test
       - name: Test
-        run: go test -v ./...
+        run: |
+          go test -v ./...
