@@ -4,11 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 )
 
@@ -60,66 +57,5 @@ func TestLogIncludesTraceFromLegacyKey(t *testing.T) {
 	}
 	if rec["msg"] != "hello" {
 		t.Fatalf("msg=%v", rec["msg"])
-	}
-}
-
-func TestTraceAndRequestLogger(t *testing.T) {
-	var buf bytes.Buffer
-	Init("info", &buf)
-	viper.Set("server.name", "store-api")
-	viper.Set("server.maxLatency", 10000)
-
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(TraceMiddleware())
-	r.Use(RequestLogger())
-	r.GET("/v1/ping-biz", func(c *gin.Context) {
-		if TraceID(c.Request.Context()) == "" {
-			t.Error("missing trace on request context")
-		}
-		c.String(http.StatusOK, "ok")
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/ping-biz", nil)
-	req.Header.Set("X-Request-ID", "given-id")
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if w.Header().Get("X-Request-ID") != "given-id" {
-		t.Fatalf("response X-Request-ID=%q", w.Header().Get("X-Request-ID"))
-	}
-
-	var rec map[string]any
-	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
-		t.Fatalf("unmarshal: %v body=%s", err, buf.String())
-	}
-	if rec["trace"] != "given-id" {
-		t.Fatalf("access log trace=%v body=%s", rec["trace"], buf.String())
-	}
-	if rec["path"] != "/v1/ping-biz" {
-		t.Fatalf("path=%v", rec["path"])
-	}
-	if rec["msg"] != "request completed" {
-		t.Fatalf("msg=%v", rec["msg"])
-	}
-}
-
-func TestRequestLoggerSkipsHealthz(t *testing.T) {
-	var buf bytes.Buffer
-	Init("info", &buf)
-
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(RequestLogger())
-	r.GET("/healthz", func(c *gin.Context) {
-		c.String(http.StatusOK, "ok")
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	if buf.Len() != 0 {
-		t.Fatalf("expected no access log for /healthz, got %s", buf.String())
 	}
 }

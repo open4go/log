@@ -2,8 +2,10 @@ package log
 
 import "github.com/sirupsen/logrus"
 
-// locationHook attaches caller file/func/line on every enabled log line,
-// and a cleaned stacktrace on error (or when the caller asked for one).
+// locationHook attaches a short `caller` (e.g. "middle/jwt.go:68") to every
+// line and a cleaned stacktrace only when it is worth the noise: panic /
+// fatal by default, error too when log.stacktrace=error, or when the call
+// site explicitly asked for one (ErrorWithStack, WarnWithStack).
 // Location is captured at write time so Log(ctx) stored on a Gin context
 // still reports the real call site, not the middleware that created it.
 type locationHook struct{}
@@ -21,12 +23,17 @@ func (h locationHook) Fire(entry *logrus.Entry) error {
 	delete(entry.Data, skipStackField)
 	_, wantStack := entry.Data[wantStackField]
 	delete(entry.Data, wantStackField)
+	_, skipCaller := entry.Data[skipCallerField]
+	delete(entry.Data, skipCallerField)
 
-	if _, ok := entry.Data[fieldFile]; !ok {
+	_, hasCaller := entry.Data[fieldCaller]
+	_, hasFile := entry.Data[fieldFile]
+	if !skipCaller && !hasCaller && !hasFile {
 		if f, ok := firstAppFrame(); ok {
-			entry.Data[fieldFile] = formatFileLine(f.File, f.Line)
-			entry.Data[fieldFunc] = shortFunc(f.Function)
-			entry.Data[fieldLine] = f.Line
+			entry.Data[fieldCaller] = formatFileLine(f.File, f.Line)
+			if settings().callerFunc {
+				entry.Data[fieldFunc] = shortFunc(f.Function)
+			}
 		}
 	}
 
@@ -36,7 +43,7 @@ func (h locationHook) Fire(entry *logrus.Entry) error {
 	if _, exists := entry.Data[fieldStack]; exists {
 		return nil
 	}
-	if !wantStack && entry.Level > logrus.ErrorLevel {
+	if !wantStack && !settings().stackEnabled(entry.Level) {
 		return nil
 	}
 	if stack := formatStack(maxStackFrames); stack != "" {
