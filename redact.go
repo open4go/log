@@ -23,6 +23,7 @@ var sensitiveExact = map[string]struct{}{
 	"aeskey": {}, "encryptkey": {}, "signkey": {},
 	"authorization": {}, "cookie": {}, "setcookie": {},
 	"otp": {}, "totp": {}, "otpcode": {}, "otpsecret": {}, "mfacode": {},
+	"urlotp": {}, "otpurl": {}, "otpuri": {}, "otpauth": {}, "otpauthurl": {}, "otpqr": {}, "otpqrcode": {}, "mfaurl": {},
 	"smscode": {}, "verifycode": {}, "verificationcode": {}, "captcha": {}, "authcode": {},
 	"idcard": {}, "idcardno": {}, "idcardnumber": {}, "idno": {}, "identitycard": {}, "identityno": {},
 	"cardno": {}, "cardnumber": {}, "bankcard": {}, "bankcardno": {}, "bankaccount": {},
@@ -105,9 +106,22 @@ func redactValue(v any, request bool) any {
 			x[i] = redactValue(x[i], request)
 		}
 		return x
+	case string:
+		if hasSecretURI(x) {
+			return RedactedValue
+		}
+		return v
 	default:
 		return v
 	}
+}
+
+// secretURIRe matches provisioning URIs that embed a shared secret
+// (otpauth:// TOTP/HOTP binding links), whatever key they are stored under.
+var secretURIRe = regexp.MustCompile(`(?i)otpauth(?:-migration)?:(?://|%2F%2F)[^"\s]*`)
+
+func hasSecretURI(s string) bool {
+	return strings.Contains(strings.ToLower(s), "otpauth") && secretURIRe.MatchString(s)
 }
 
 // redactJSON returns a compact, redacted copy of a complete JSON document.
@@ -136,6 +150,7 @@ var jsonPairRe = regexp.MustCompile(`"((?:[^"\\]|\\.){1,128})"\s*:\s*("(?:[^"\\]
 // redactJSONText masks sensitive keys in JSON text that could not be
 // parsed (for example because it was truncated).
 func redactJSONText(s string, request bool) string {
+	s = secretURIRe.ReplaceAllString(s, RedactedValue)
 	return jsonPairRe.ReplaceAllStringFunc(s, func(m string) string {
 		sub := jsonPairRe.FindStringSubmatch(m)
 		if len(sub) < 3 || !IsSensitiveKey(sub[1], request) {
@@ -158,6 +173,10 @@ func redactValues(vals url.Values, request bool) map[string]any {
 			continue
 		}
 		if len(vs) == 1 {
+			if hasSecretURI(vs[0]) {
+				out[k] = RedactedValue
+				continue
+			}
 			out[k] = vs[0]
 			continue
 		}
