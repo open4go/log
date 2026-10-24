@@ -72,7 +72,9 @@ func TestAccessLogPairWithBodiesAndRedaction(t *testing.T) {
 	var buf bytes.Buffer
 	viper.Set("server.name", "order-api")
 	t.Cleanup(func() { viper.Set("server.name", "") })
-	r := newEngine(&buf, DefaultAccessLogConfig())
+	okCfg := DefaultAccessLogConfig()
+	okCfg.ResponseBodyOnSuccess = true
+	r := newEngine(&buf, okCfg)
 	r.POST("/v1/hlj/order/:id", func(c *gin.Context) {
 		var in map[string]any
 		if err := c.ShouldBindJSON(&in); err != nil {
@@ -225,6 +227,7 @@ func TestAccessLogTruncationAndBinary(t *testing.T) {
 	var buf bytes.Buffer
 	cfg := DefaultAccessLogConfig()
 	cfg.MaxBodyBytes = 64
+	cfg.ResponseBodyOnSuccess = true
 	r := newEngine(&buf, cfg)
 	var got int
 	r.POST("/big", func(c *gin.Context) {
@@ -356,5 +359,32 @@ func TestIsSensitiveKey(t *testing.T) {
 	AddSensitiveKeys("wxOpenId")
 	if !IsSensitiveKey("wx_open_id", false) {
 		t.Error("extra key not applied")
+	}
+}
+
+func TestAccessLogSuccessBodyOmittedByDefaultErrorsKeepBody(t *testing.T) {
+	var buf bytes.Buffer
+	r := newEngine(&buf, DefaultAccessLogConfig())
+	r.GET("/ok", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"code": 0, "data": strings.Repeat("z", 100)})
+	})
+	r.GET("/bad", func(c *gin.Context) {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 400, "msg": "bad"})
+	})
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/ok", nil))
+	_, end := pair(t, &buf)
+	if _, ok := end["resp_body"]; ok {
+		t.Fatalf("2xx body must be omitted by default: %v", end)
+	}
+	if end["resp_size"] == nil || end["status"] != float64(200) {
+		t.Fatalf("size and status must stay: %v", end)
+	}
+
+	buf.Reset()
+	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/bad", nil))
+	_, end = pair(t, &buf)
+	rb, _ := end["resp_body"].(map[string]any)
+	if rb["msg"] != "bad" {
+		t.Fatalf("error body must be kept: %v", end)
 	}
 }

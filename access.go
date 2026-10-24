@@ -38,6 +38,10 @@ type AccessLogConfig struct {
 	// RequestBody / ResponseBody include payloads (default true).
 	RequestBody  bool
 	ResponseBody bool
+	// ResponseBodyOnSuccess also logs the response body of 2xx/3xx replies
+	// (default false: success bodies are large and rarely needed; error
+	// responses (>=400), panics and slow requests always keep the body).
+	ResponseBodyOnSuccess bool
 	// MaxBodyBytes caps each logged payload (default 4096). Larger bodies are
 	// truncated; the request itself is never modified.
 	MaxBodyBytes int
@@ -73,6 +77,7 @@ func DefaultAccessLogConfig() AccessLogConfig {
 //	log.access.enabled        bool   (default true)
 //	log.access.request_body   bool   (default true)
 //	log.access.response_body  bool   (default true)
+//	log.access.response_body_on_success bool (default false)
 //	log.access.max_body       int    bytes (default 4096)
 //	log.access.skip_paths     []string, added to DefaultSkipPaths
 //	log.access.skip_options   bool   (default true)
@@ -89,6 +94,9 @@ func AccessLogConfigFromViper() AccessLogConfig {
 	}
 	if viper.IsSet("log.access.response_body") {
 		cfg.ResponseBody = viper.GetBool("log.access.response_body")
+	}
+	if viper.IsSet("log.access.response_body_on_success") {
+		cfg.ResponseBodyOnSuccess = viper.GetBool("log.access.response_body_on_success")
 	}
 	if n := viper.GetInt("log.access.max_body"); n > 0 {
 		cfg.MaxBodyBytes = n
@@ -279,7 +287,7 @@ func writeAPIEnd(c *gin.Context, cfg AccessLogConfig, start time.Time, rw *captu
 	if rec != nil {
 		fields["panic"] = truncate(fmt.Sprint(rec), 512)
 	}
-	if rw != nil {
+	if rw != nil && (cfg.ResponseBodyOnSuccess || status >= 400 || rec != nil || fields["slow"] == true || fields["panic"] != nil) {
 		rw.addFields(fields)
 	}
 
