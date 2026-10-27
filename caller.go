@@ -8,17 +8,19 @@ import (
 )
 
 const (
-	fieldFile  = "file"
-	fieldFunc  = "func"
-	fieldLine  = "line"
-	fieldStack = "stacktrace"
+	fieldCaller = "caller"
+	fieldFile   = "file"
+	fieldFunc   = "func"
+	fieldLine   = "line"
+	fieldStack  = "stacktrace"
 
 	// Internal field names stripped before the line is written.
-	skipStackField = "_skip_stack"
-	wantStackField = "_want_stack"
+	skipStackField  = "_skip_stack"
+	wantStackField  = "_want_stack"
+	skipCallerField = "_skip_caller"
 
 	maxWalkDepth   = 32
-	maxStackFrames = 8
+	maxStackFrames = 12
 )
 
 var (
@@ -75,14 +77,32 @@ func isInternalFrame(f runtime.Frame) bool {
 	case pkg != currentPackage():
 		return false
 	}
-	// Call sites inside this package (middleware, tests) should still show up.
-	if strings.HasSuffix(f.File, "_test.go") || strings.HasSuffix(f.File, "/middle.go") {
+	// Call sites in this package's tests should still show up.
+	if strings.HasSuffix(f.File, "_test.go") {
 		return false
 	}
 	return true
 }
 
+// isFrameworkFrame reports frames that only add noise to a stack trace
+// (gin's middleware chain, metrics wrappers, net/http plumbing).
+func isFrameworkFrame(f runtime.Frame) bool {
+	pkg := packageName(f.Function)
+	switch {
+	case strings.HasPrefix(pkg, "github.com/gin-gonic/"),
+		strings.HasPrefix(pkg, "github.com/penglongli/gin-metrics"),
+		strings.HasPrefix(pkg, "github.com/gin-contrib/"),
+		pkg == "net/http":
+		return true
+	}
+	return false
+}
+
 func collectAppFrames(max int) []runtime.Frame {
+	return collectFrames(max, false)
+}
+
+func collectFrames(max int, dropFramework bool) []runtime.Frame {
 	if max <= 0 {
 		max = 1
 	}
@@ -98,7 +118,7 @@ func collectAppFrames(max int) []runtime.Frame {
 	out := make([]runtime.Frame, 0, max)
 	for {
 		f, more := frames.Next()
-		if !isInternalFrame(f) {
+		if !isInternalFrame(f) && (!dropFramework || !isFrameworkFrame(f)) {
 			out = append(out, f)
 			if len(out) >= max {
 				break
@@ -132,7 +152,8 @@ func shortFunc(full string) string {
 }
 
 // shortFile keeps the last two path segments so handler.go in different
-// packages stay distinguishable.
+// packages stay distinguishable. Module versions are dropped:
+// ".../middle@v0.3.62/jwt.go" becomes "middle/jwt.go".
 func shortFile(path string) string {
 	path = strings.ReplaceAll(path, "\\", "/")
 	if path == "" {
@@ -140,7 +161,11 @@ func shortFile(path string) string {
 	}
 	parts := strings.Split(path, "/")
 	if len(parts) >= 2 {
-		return parts[len(parts)-2] + "/" + parts[len(parts)-1]
+		dir := parts[len(parts)-2]
+		if i := strings.Index(dir, "@"); i > 0 {
+			dir = dir[:i]
+		}
+		return dir + "/" + parts[len(parts)-1]
 	}
 	return parts[len(parts)-1]
 }
@@ -150,7 +175,7 @@ func formatFileLine(file string, line int) string {
 }
 
 func formatStack(max int) string {
-	frames := collectAppFrames(max)
+	frames := collectFrames(max, true)
 	if len(frames) == 0 {
 		return ""
 	}

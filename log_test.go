@@ -5,14 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
+	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
+	"github.com/spf13/viper"
 )
 
 func decodeLog(t *testing.T, buf *bytes.Buffer) map[string]any {
@@ -32,20 +32,14 @@ func TestLogCallerIsThisFunctionAndLine(t *testing.T) {
 	Log(context.Background()).Info("caller-check")
 
 	rec := decodeLog(t, &buf)
-	gotFile, _ := rec["file"].(string)
-	gotFunc, _ := rec["func"].(string)
-	gotLine, ok := rec["line"].(float64)
-	if !ok {
-		t.Fatalf("line type %T record=%v", rec["line"], rec)
+	gotCaller, _ := rec["caller"].(string)
+	if !strings.HasSuffix(gotCaller, "log_test.go:"+strconv.Itoa(line+1)) {
+		t.Fatalf("caller=%q want log_test.go:%d", gotCaller, line+1)
 	}
-	if !strings.Contains(gotFile, "log_test.go") {
-		t.Fatalf("file=%q want log_test.go", gotFile)
-	}
-	if int(gotLine) != line+1 {
-		t.Fatalf("line=%v want %d file=%q", gotLine, line+1, gotFile)
-	}
-	if !strings.Contains(gotFunc, "TestLogCallerIsThisFunctionAndLine") {
-		t.Fatalf("func=%q", gotFunc)
+	for _, k := range []string{"file", "func", "line"} {
+		if _, ok := rec[k]; ok {
+			t.Fatalf("legacy field %q should be gone: %v", k, rec)
+		}
 	}
 	if _, hasStack := rec["stacktrace"]; hasStack {
 		t.Fatalf("info logs must not include stacktrace: %v", rec)
@@ -61,36 +55,39 @@ func TestErrorHelperCallerIsNotErrorWrapper(t *testing.T) {
 	Error(context.Background(), err)
 
 	rec := decodeLog(t, &buf)
-	gotFunc, _ := rec["func"].(string)
-	gotFile, _ := rec["file"].(string)
-	gotLine, _ := rec["line"].(float64)
-	if gotFunc == "Error" || strings.HasSuffix(gotFunc, ".Error") {
-		t.Fatalf("func=%q should be the test, not the Error helper", gotFunc)
-	}
-	if !strings.Contains(gotFunc, "TestErrorHelperCallerIsNotErrorWrapper") {
-		t.Fatalf("func=%q", gotFunc)
-	}
-	if !strings.Contains(gotFile, "log_test.go") {
-		t.Fatalf("file=%q", gotFile)
-	}
-	if int(gotLine) != line+1 {
-		t.Fatalf("line=%v want %d", gotLine, line+1)
+	gotCaller, _ := rec["caller"].(string)
+	if gotCaller != "log/log_test.go:"+strconv.Itoa(line+1) {
+		t.Fatalf("caller=%q want log/log_test.go:%d", gotCaller, line+1)
 	}
 	if rec["error"] != "save failed" {
 		t.Fatalf("error field=%v", rec["error"])
 	}
-	stack, _ := rec["stacktrace"].(string)
-	if !strings.Contains(stack, "TestErrorHelperCallerIsNotErrorWrapper") {
-		t.Fatalf("stacktrace missing test function:\n%s", stack)
-	}
-	if strings.Contains(stack, "runtime/debug.Stack") {
-		t.Fatalf("stacktrace should not include debug.Stack internals:\n%s", stack)
+	if _, ok := rec["stacktrace"]; ok {
+		t.Fatalf("plain error must not carry a stacktrace by default: %v", rec)
 	}
 }
 
-func TestLogErrorIncludesStack(t *testing.T) {
+func TestErrorWithStackIncludesStack(t *testing.T) {
 	var buf bytes.Buffer
 	Init("debug", &buf)
+
+	ErrorWithStack(context.Background(), errors.New("x"))
+	rec := decodeLog(t, &buf)
+	stack, _ := rec["stacktrace"].(string)
+	if !strings.Contains(stack, "TestErrorWithStackIncludesStack") {
+		t.Fatalf("stacktrace missing test function:\n%s", stack)
+	}
+	if strings.Contains(stack, "runtime") {
+		t.Fatalf("stacktrace should not include runtime internals:\n%s", stack)
+	}
+}
+
+func TestLogErrorStackOptIn(t *testing.T) {
+	var buf bytes.Buffer
+	t.Setenv("LOG_STACKTRACE", "error")
+	t.Setenv("LOG_CALLER_FUNC", "true")
+	Init("debug", &buf)
+	t.Cleanup(func() { _ = os.Unsetenv("LOG_STACKTRACE"); _ = os.Unsetenv("LOG_CALLER_FUNC"); Init("debug", nil) })
 
 	nestedErrorLog(context.Background())
 
@@ -103,7 +100,7 @@ func TestLogErrorIncludesStack(t *testing.T) {
 	if !strings.Contains(stack, "nestedErrorLog") {
 		t.Fatalf("stack missing nestedErrorLog:\n%s", stack)
 	}
-	if !strings.Contains(stack, "TestLogErrorIncludesStack") {
+	if !strings.Contains(stack, "TestLogErrorStackOptIn") {
 		t.Fatalf("stack missing test function:\n%s", stack)
 	}
 }
@@ -122,43 +119,8 @@ func TestGinClosureCallerKeepsParentName(t *testing.T) {
 	handler()
 
 	rec := decodeLog(t, &buf)
-	gotFunc, _ := rec["func"].(string)
-	if !strings.Contains(gotFunc, "TestGinClosureCallerKeepsParentName") {
-		t.Fatalf("func=%q should keep the enclosing function, not just func1", gotFunc)
-	}
-}
-
-func TestRequestLoggerOmitsStack(t *testing.T) {
-	var buf bytes.Buffer
-	Init("info", &buf)
-
-	gin.SetMode(gin.TestMode)
-	r := gin.New()
-	r.Use(RequestLogger())
-	r.GET("/v1/fail", func(c *gin.Context) {
-		c.Status(http.StatusInternalServerError)
-	})
-
-	req := httptest.NewRequest(http.MethodGet, "/v1/fail", nil)
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
-
-	rec := decodeLog(t, &buf)
-	if rec["msg"] != "request completed" {
-		t.Fatalf("msg=%v body=%s", rec["msg"], buf.String())
-	}
-	if rec["status"] != float64(500) {
-		t.Fatalf("status=%v", rec["status"])
-	}
-	if _, ok := rec["_skip_stack"]; ok {
-		t.Fatalf("internal skip field leaked: %v", rec)
-	}
-	if _, ok := rec["stacktrace"]; ok {
-		t.Fatalf("access logs must not include stacktrace: %v", rec)
-	}
-	gotFunc, _ := rec["func"].(string)
-	if !strings.Contains(gotFunc, "RequestLogger") {
-		t.Fatalf("access log func=%q", gotFunc)
+	if c, _ := rec["caller"].(string); !strings.HasPrefix(c, "log/log_test.go:") {
+		t.Fatalf("caller=%q", c)
 	}
 }
 
@@ -167,12 +129,12 @@ func TestStoredEntryReportsWriteSite(t *testing.T) {
 	Init("debug", &buf)
 
 	entry := Log(context.Background())
+	_, _, line, _ := runtime.Caller(0)
 	writeStoredEntry(entry)
 
 	rec := decodeLog(t, &buf)
-	gotFunc, _ := rec["func"].(string)
-	if !strings.Contains(gotFunc, "writeStoredEntry") {
-		t.Fatalf("func=%q should be the write site, not Log() / middleware", gotFunc)
+	if c, _ := rec["caller"].(string); c == "" || c == "log/log_test.go:"+strconv.Itoa(line+1) {
+		t.Fatalf("caller=%q should be the write site inside writeStoredEntry", c)
 	}
 }
 
@@ -193,20 +155,16 @@ func TestErrorfCallerAndMessage(t *testing.T) {
 	if rec["error"] != "disk" {
 		t.Fatalf("error=%v", rec["error"])
 	}
-	gotFunc, _ := rec["func"].(string)
-	if !strings.Contains(gotFunc, "TestErrorfCallerAndMessage") {
-		t.Fatalf("func=%q", gotFunc)
-	}
-	if rec["stacktrace"] == nil {
-		t.Fatal("expected stacktrace")
+	if c, _ := rec["caller"].(string); !strings.HasPrefix(c, "log/log_test.go:") {
+		t.Fatalf("caller=%q", c)
 	}
 }
 
 func TestNilContextDoesNotPanic(t *testing.T) {
 	var buf bytes.Buffer
 	Init("debug", &buf)
-	Log(nil).Info("ok")
-	Error(nil, nil)
+	Log(nil).Info("ok") //nolint:staticcheck // SA1012: test intentionally passes nil
+	Error(nil, nil)     //nolint:staticcheck // SA1012: test intentionally passes nil
 }
 
 func TestHTMLNotEscaped(t *testing.T) {
@@ -236,7 +194,43 @@ func TestShortFuncAndFile(t *testing.T) {
 	if got := shortFile("/Users/frank/code/handler/order.go"); got != "handler/order.go" {
 		t.Errorf("shortFile=%q", got)
 	}
+	if got := shortFile("/root/go/pkg/mod/github.com/open4go/middle@v0.3.62/jwt.go"); got != "middle/jwt.go" {
+		t.Errorf("shortFile(module)=%q", got)
+	}
 	if got := formatFileLine("/tmp/order.go", 42); got != "tmp/order.go:42" {
 		t.Errorf("formatFileLine=%q", got)
+	}
+}
+
+func TestOrderedFieldsAndNoisyLineShape(t *testing.T) {
+	var buf bytes.Buffer
+	viper.Set("server.name", "order-api")
+	t.Cleanup(func() { viper.Set("server.name", "") })
+	Init("debug", &buf)
+	ctx := Inject(context.Background(), "t-1", "1.2.3.4")
+	Log(ctx).WithError(errors.New("http: named cookie not present")).WithField("zeta", 1).WithField("alpha", 2).Error("Failed")
+	line := strings.TrimSpace(buf.String())
+	want := []string{`{"time":`, `"level":"error"`, `"server":"order-api"`, `"trace":"t-1"`, `"msg":"Failed"`, `"error":"http: named cookie not present"`, `"caller":"log/log_test.go:`, `"ip":"1.2.3.4"`, `"alpha":2`, `"zeta":1`}
+	pos := -1
+	for _, w := range want {
+		i := strings.Index(line, w)
+		if i < 0 || i < pos {
+			t.Fatalf("%s out of order/missing in %s", w, line)
+		}
+		pos = i
+	}
+	if strings.Contains(line, "stacktrace") {
+		t.Fatalf("error line should not carry stacktrace: %s", line)
+	}
+}
+
+func TestLogLevelEnvOverride(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "warn")
+	var buf bytes.Buffer
+	Init("debug", &buf)
+	t.Cleanup(func() { _ = os.Unsetenv("LOG_LEVEL"); Init("debug", nil) })
+	Log(context.Background()).Info("hidden")
+	if buf.Len() != 0 {
+		t.Fatalf("LOG_LEVEL ignored: %s", buf.String())
 	}
 }

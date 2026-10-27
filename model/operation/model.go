@@ -85,4 +85,13 @@ type Model struct {
 	OperatorPhone string `json:"operator_phone" bson:"operator_phone"`
 	// LoginType 操作人登录类型（admin / member 等）
 	LoginType string `json:"login_type" bson:"login_type"`
+	// Client 调用端编码，例如 x9（后台）、x6（点餐端）、x5（出餐管理端）、x2（大厅小程序）。
+	// 由前端通过 X-Client-Id 上报，仅用于审计展示与筛选，不可用于鉴权；旧数据为空。
+	Client string `json:"client" bson:"client"`
+	// ClientVersion 调用端版本号，例如 0.0.118；旧数据为空。
+	ClientVersion string `json:"client_version" bson:"client_version"`
+	// DeviceID 前端上报的设备标识（X-Device-ID），Device 字段只存中文设备描述。
+	DeviceID string `json:"device_id" bson:"device_id"`
+	// IPLocation 来源 IP 的中文归属地，例如「广西南宁 电信」；旧数据为空，展示时回填。
+	IPLocation string `json:"ip_location" bson:"ip_location"`
 }

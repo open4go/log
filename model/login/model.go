@@ -64,4 +64,12 @@ type Model struct {
 	TraceID string `json:"trace_id" bson:"trace_id"`
 	// UserAgent 浏览器 / 客户端
 	UserAgent string `json:"user_agent" bson:"user_agent"`
+	// Client 调用端编码，例如 x9 / x6 / x5 / x2；仅用于审计展示与筛选，不可用于鉴权；旧数据为空。
+	Client string `json:"client" bson:"client"`
+	// ClientVersion 调用端版本号；旧数据为空。
+	ClientVersion string `json:"client_version" bson:"client_version"`
+	// DeviceID 前端上报的设备标识（X-Device-ID），Device 字段只存中文设备描述。
+	DeviceID string `json:"device_id" bson:"device_id"`
+	// IPLocation 来源 IP 的中文归属地，例如「广西南宁 电信」；旧数据为空，展示时回填。
+	IPLocation string `json:"ip_location" bson:"ip_location"`
 }
