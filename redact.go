@@ -28,6 +28,7 @@ var sensitiveExact = map[string]struct{}{
 	"idcard": {}, "idcardno": {}, "idcardnumber": {}, "idno": {}, "identitycard": {}, "identityno": {},
 	"cardno": {}, "cardnumber": {}, "bankcard": {}, "bankcardno": {}, "bankaccount": {},
 	"cvv": {}, "cvc": {}, "pin": {},
+	"phone": {}, "mobile": {}, "mobileno": {}, "phonenumber": {}, "tel": {}, "cellphone": {},
 }
 
 // sensitiveSuffix catch compound names such as newPassword, jwtToken,
@@ -53,6 +54,15 @@ func AddSensitiveKeys(keys ...string) {
 		if n := normalizeKey(k); n != "" {
 			extraSensitive[n] = struct{}{}
 		}
+	}
+}
+
+func isPhoneKey(key string) bool {
+	switch normalizeKey(key) {
+	case "phone", "mobile", "mobileno", "phonenumber", "tel", "cellphone", "operatorphone":
+		return true
+	default:
+		return strings.HasSuffix(normalizeKey(key), "phone")
 	}
 }
 
@@ -94,7 +104,15 @@ func redactValue(v any, request bool) any {
 		for k, val := range x {
 			if IsSensitiveKey(k, request) {
 				if val != nil {
-					x[k] = RedactedValue
+					if isPhoneKey(k) {
+						if s, ok := val.(string); ok {
+							x[k] = MaskPhone(s)
+						} else {
+							x[k] = RedactedValue
+						}
+					} else {
+						x[k] = RedactedValue
+					}
 				}
 				continue
 			}
