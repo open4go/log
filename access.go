@@ -53,6 +53,12 @@ type AccessLogConfig struct {
 	// StatusLevel logs api-end at warn for 4xx and error for 5xx.
 	// Default false: both lines are info.
 	StatusLevel bool
+	// MaxRequestBody caps inbound body via http.MaxBytesReader (0 = 1 MiB default).
+	// Upload path prefixes use MaxUploadBody instead (0 = 32 MiB default).
+	MaxRequestBody int64
+	MaxUploadBody  int64
+	// UploadPathPrefixes are path prefixes that use MaxUploadBody (e.g. "/upload").
+	UploadPathPrefixes []string
 	// SlowThreshold marks api-end with "slow": true (0 = off).
 	SlowThreshold time.Duration
 }
@@ -109,6 +115,13 @@ func AccessLogConfigFromViper() AccessLogConfig {
 	if ms := viper.GetInt64("server.maxLatency"); ms > 0 {
 		cfg.SlowThreshold = time.Duration(ms) * time.Millisecond
 	}
+	if n := viper.GetInt64("server.max_request_body"); n > 0 {
+		cfg.MaxRequestBody = n
+	}
+	if n := viper.GetInt64("server.max_upload_body"); n > 0 {
+		cfg.MaxUploadBody = n
+	}
+	cfg.UploadPathPrefixes = append(cfg.UploadPathPrefixes, viper.GetStringSlice("server.upload_path_prefixes")...)
 	AddSensitiveKeys(viper.GetStringSlice("log.access.sensitive_keys")...)
 	return cfg
 }
@@ -167,9 +180,11 @@ func AccessLogger(cfg AccessLogConfig) gin.HandlerFunc {
 
 	return func(c *gin.Context) {
 		if !cfg.Enabled || skip(c) {
+			limitRequestBody(c, cfg)
 			c.Next()
 			return
 		}
+		limitRequestBody(c, cfg)
 		start := time.Now()
 		ctx := ensureTrace(c)
 
@@ -471,4 +486,35 @@ func (w *captureWriter) addFields(fields logrus.Fields) {
 		return
 	}
 	putBody(fields, "resp_body", w.buf.Bytes(), w.truncated, false)
+}
+
+// limitRequestBody wraps the request body with http.MaxBytesReader.
+// Default 1 MiB; paths under UploadPathPrefixes use MaxUploadBody (default 32 MiB).
+func limitRequestBody(c *gin.Context, cfg AccessLogConfig) {
+	if c == nil || c.Request == nil || c.Request.Body == nil {
+		return
+	}
+	max := cfg.MaxRequestBody
+	if max <= 0 {
+		max = 1 << 20
+	}
+	path := c.Request.URL.Path
+	for _, p := range cfg.UploadPathPrefixes {
+		p = strings.TrimSpace(p)
+		if p != "" && strings.HasPrefix(path, p) {
+			max = cfg.MaxUploadBody
+			if max <= 0 {
+				max = 32 << 20
+			}
+			break
+		}
+	}
+	// Common upload URL shapes when no prefixes configured.
+	if len(cfg.UploadPathPrefixes) == 0 && (strings.Contains(path, "/upload") || strings.Contains(path, "/file")) {
+		max = cfg.MaxUploadBody
+		if max <= 0 {
+			max = 32 << 20
+		}
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, max)
 }
