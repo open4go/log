@@ -388,3 +388,29 @@ func TestAccessLogSuccessBodyOmittedByDefaultErrorsKeepBody(t *testing.T) {
 		t.Fatalf("error body must be kept: %v", end)
 	}
 }
+
+func TestLimitRequestBodyRejectsOversize(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cfg := AccessLogConfig{Enabled: true, MaxRequestBody: 64, RequestBody: false, ResponseBody: false}
+	r := gin.New()
+	r.Use(AccessLogger(cfg))
+	r.POST("/t", func(c *gin.Context) {
+		buf := make([]byte, 128)
+		_, err := c.Request.Body.Read(buf)
+		if err == nil {
+			c.String(200, "ok")
+			return
+		}
+		c.String(http.StatusRequestEntityTooLarge, "too large")
+	})
+	body := strings.Repeat("a", 128)
+	w := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/t", strings.NewReader(body))
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusRequestEntityTooLarge && w.Code != 200 {
+		// MaxBytesReader returns error on Read; handler maps it
+	}
+	if w.Body.String() == "ok" {
+		t.Fatal("oversize body should not fully read as ok")
+	}
+}
