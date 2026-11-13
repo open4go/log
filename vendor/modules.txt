@@ -58,12 +58,13 @@ github.com/hashicorp/hcl/json/token
 # github.com/json-iterator/go v1.1.12
 ## explicit; go 1.12
 github.com/json-iterator/go
-# github.com/klauspost/compress v1.16.7
-## explicit; go 1.18
+# github.com/klauspost/compress v1.20.2
+## explicit; go 1.25
 github.com/klauspost/compress
 github.com/klauspost/compress/fse
 github.com/klauspost/compress/huff0
 github.com/klauspost/compress/internal/cpuinfo
+github.com/klauspost/compress/internal/le
 github.com/klauspost/compress/internal/snapref
 github.com/klauspost/compress/zstd
 github.com/klauspost/compress/zstd/internal/xxhash
@@ -108,8 +109,6 @@ github.com/r2day/base/time
 # github.com/r2day/db v0.3.5
 ## explicit; go 1.19
 github.com/r2day/db
-# github.com/rabbitmq/amqp091-go v1.14.0
-## explicit; go 1.20
 # github.com/redis/go-redis/v9 v9.0.3
 ## explicit; go 1.18
 github.com/redis/go-redis/v9
