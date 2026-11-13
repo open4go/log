@@ -74,6 +74,8 @@ func isInternalFrame(f runtime.Frame) bool {
 		return true
 	case pkg == "github.com/sirupsen/logrus" || strings.HasPrefix(pkg, "github.com/sirupsen/logrus/"):
 		return true
+	case isKnownWrapper(f):
+		return true
 	case pkg != currentPackage():
 		return false
 	}
@@ -82,6 +84,42 @@ func isInternalFrame(f runtime.Frame) bool {
 		return false
 	}
 	return true
+}
+
+// isKnownWrapper reports library helpers whose job is to log on behalf of
+// the business caller. Skipping them makes "caller" point at the handler
+// that invoked the helper, not at rest/error.go.
+func isKnownWrapper(f runtime.Frame) bool {
+	fn := f.Function
+	for _, w := range knownWrapperFuncs {
+		if fn == w || strings.HasPrefix(fn, w+".") {
+			return true
+		}
+	}
+	return false
+}
+
+// Wrapper functions in shared libraries that log for their caller.
+// Closures (".funcN") are also matched via the prefix check above.
+var knownWrapperFuncs = []string{
+	"github.com/open4go/rest.MakeError",
+	"github.com/open4go/rest.MakeResponse",
+}
+
+// Caller returns a short "dir/file.go:line" for the first application
+// frame, skipping skip extra application frames (0 = the caller of Caller).
+// Shared wrappers such as rest.MakeError can set the "caller" field to
+// Caller(1) so the hook keeps the business call site. An empty string means
+// no application frame was found.
+func Caller(skip int) string {
+	if skip < 0 {
+		skip = 0
+	}
+	frames := collectAppFrames(skip + 1)
+	if len(frames) <= skip {
+		return ""
+	}
+	return formatFileLine(frames[skip].File, frames[skip].Line)
 }
 
 // isFrameworkFrame reports frames that only add noise to a stack trace

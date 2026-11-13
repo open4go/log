@@ -3,7 +3,7 @@
 > 仓库：https://github.com/open4go/log ｜ 模块：`github.com/open4go/log` ｜ Go 1.25.8 ｜ 最近提交：2026-10-08（最新 tag v0.0.23）｜ 仓库提交了 vendor（1756 个文件）
 
 ## 项目简介
-基于 logrus 的进程级 JSON 日志。`Log(ctx)` 自动附带 server、trace、ip、merchantId、operator 和镜像构建元数据（环境变量 `IMAGE_TAG/GIT_COMMIT/GIT_BRANCH/BUILD_TIME/HOSTNAME`）；通过 hook 记录调用位置，Error 级别附带精简堆栈；提供 Gin 的 `TraceMiddleware` 和 `RequestLogger`。另外包含登录日志、操作日志两个 Mongo 模型。
+基于 logrus 的进程级 JSON 日志。`Log(ctx)` 自动附带 server、trace、ip、merchantId、operator 和构建元数据：`image`（`IMAGE_TAG`，否则 `SERVER_VERSION` / `APP_VERSION` / ldflags / `VERSION` 文件）、`git_commit`（`GIT_COMMIT`，否则 ldflags 或 `runtime/debug` 的 `vcs.revision`）、`git_branch`、`build_time`、`instance`（`HOSTNAME`）。`Init` 会重新读取这些环境变量，所以进程启动后（以及测试里 `Setenv` 之后）注入的值也会生效。hook 在每条日志上写短字段 `caller`（如 `handler.go:88`），并跳过 `open4go/log`、logrus、runtime 以及 `rest.MakeError` / `MakeResponse` 包装帧，让错误行指向业务代码。默认只有 panic/fatal 带堆栈（`log.stacktrace=error` 可改为 error 也带）；提供 Gin 的 `TraceMiddleware` 和 `RequestLogger`。另外包含登录日志、操作日志两个 Mongo 模型。
 
 ## 目录结构
 ```

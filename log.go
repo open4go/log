@@ -13,22 +13,6 @@ import (
 
 var logger = logrus.New()
 
-type buildMeta struct {
-	Image     string
-	GitCommit string
-	GitBranch string
-	BuildTime string
-	Instance  string
-}
-
-var meta = buildMeta{
-	Image:     os.Getenv("IMAGE_TAG"),
-	GitCommit: os.Getenv("GIT_COMMIT"),
-	GitBranch: os.Getenv("GIT_BRANCH"),
-	BuildTime: os.Getenv("BUILD_TIME"),
-	Instance:  os.Getenv("HOSTNAME"),
-}
-
 // formatSettings are read on every log line; swapped atomically by Init.
 type formatSettings struct {
 	// stackLevel: lines at this level or more severe get a stacktrace.
@@ -60,6 +44,7 @@ func init() {
 	logger.SetOutput(os.Stdout)
 	logger.AddHook(locationHook{})
 	current.Store(loadSettings())
+	refreshMeta()
 }
 
 func jsonFormatter() logrus.Formatter {
@@ -116,6 +101,14 @@ func ParseLevel(logLevel string) logrus.Level {
 //
 //	log.stacktrace  / LOG_STACKTRACE : fatal (default) | error | warn | none
 //	log.caller_func / LOG_CALLER_FUNC: true adds a "func" field next to "caller"
+//
+// Init also refreshes build metadata used on every line:
+//
+//	image      ← IMAGE_TAG, else SERVER_VERSION / APP_VERSION, else ldImage, else VERSION file
+//	git_commit ← GIT_COMMIT, else ldGitCommit, else runtime/debug vcs.revision
+//	git_branch ← GIT_BRANCH, else ldGitBranch
+//	build_time ← BUILD_TIME, else ldBuildTime, else vcs.time
+//	instance   ← HOSTNAME
 func Init(logLevel string, output io.Writer) {
 	if output != nil {
 		logger.SetOutput(output)
@@ -131,6 +124,10 @@ func Init(logLevel string, output io.Writer) {
 	}
 	logger.SetLevel(ParseLevel(logLevel))
 	current.Store(loadSettings())
+	// Re-read IMAGE_TAG / GIT_COMMIT and fallbacks so values injected after
+	// package import (compose env is actually present at import, but tests
+	// and late config load can set them afterwards) are not sticky.
+	refreshMeta()
 }
 
 // SetLevel changes the level at runtime (debug | info | warn | error).
@@ -225,20 +222,21 @@ func getBaseEntry(ctx context.Context) *logrus.Entry {
 		fields["operator"] = operator
 	}
 
-	if meta.Image != "" {
-		fields["image"] = meta.Image
+	m := currentMeta()
+	if m.Image != "" {
+		fields["image"] = m.Image
 	}
-	if meta.GitCommit != "" {
-		fields["git_commit"] = meta.GitCommit
+	if m.GitCommit != "" {
+		fields["git_commit"] = m.GitCommit
 	}
-	if meta.GitBranch != "" {
-		fields["git_branch"] = meta.GitBranch
+	if m.GitBranch != "" {
+		fields["git_branch"] = m.GitBranch
 	}
-	if meta.BuildTime != "" {
-		fields["build_time"] = meta.BuildTime
+	if m.BuildTime != "" {
+		fields["build_time"] = m.BuildTime
 	}
-	if meta.Instance != "" {
-		fields["instance"] = meta.Instance
+	if m.Instance != "" {
+		fields["instance"] = m.Instance
 	}
 
 	return logger.WithFields(fields)
