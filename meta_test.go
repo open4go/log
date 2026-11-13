@@ -123,7 +123,10 @@ func TestGitCommitFallbackFromBuildInfo(t *testing.T) {
 		t.Fatalf("git_commit=%q looks too short for a vcs.revision", m.GitCommit)
 	}
 	for _, c := range got {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F':
+			// hex
+		default:
 			t.Fatalf("git_commit=%q is not a hex SHA", m.GitCommit)
 		}
 	}

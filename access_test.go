@@ -407,9 +407,6 @@ func TestLimitRequestBodyRejectsOversize(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/t", strings.NewReader(body))
 	r.ServeHTTP(w, req)
-	if w.Code != http.StatusRequestEntityTooLarge && w.Code != 200 {
-		// MaxBytesReader returns error on Read; handler maps it
-	}
 	if w.Body.String() == "ok" {
 		t.Fatal("oversize body should not fully read as ok")
 	}
