@@ -205,12 +205,13 @@ func TestShortFuncAndFile(t *testing.T) {
 func TestOrderedFieldsAndNoisyLineShape(t *testing.T) {
 	var buf bytes.Buffer
 	viper.Set("server.name", "order-api")
+	t.Setenv("SERVER_KIND", "api")
 	t.Cleanup(func() { viper.Set("server.name", "") })
 	Init("debug", &buf)
 	ctx := Inject(context.Background(), "t-1", "1.2.3.4")
 	Log(ctx).WithError(errors.New("http: named cookie not present")).WithField("zeta", 1).WithField("alpha", 2).Error("Failed")
 	line := strings.TrimSpace(buf.String())
-	want := []string{`{"time":`, `"level":"error"`, `"server":"order-api"`, `"trace":"t-1"`, `"msg":"Failed"`, `"error":"http: named cookie not present"`, `"caller":"log/log_test.go:`, `"ip":"1.2.3.4"`, `"alpha":2`, `"zeta":1`}
+	want := []string{`{"time":`, `"level":"error"`, `"server":"order-api"`, `"kind":"api"`, `"trace":"t-1"`, `"msg":"Failed"`, `"error":"http: named cookie not present"`, `"caller":"log/log_test.go:`, `"ip":"1.2.3.4"`, `"alpha":2`, `"zeta":1`}
 	pos := -1
 	for _, w := range want {
 		i := strings.Index(line, w)

@@ -92,6 +92,8 @@ func TestAccessLogPairWithBodiesAndRedaction(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/hlj/order/9?page=1&token=abc", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	req.Header.Set("X-Request-ID", "given-id")
+	req.Header.Set("Authorization", "Bearer super-secret")
+	req.Header.Set("Cookie", "sid=session-value")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -102,9 +104,26 @@ func TestAccessLogPairWithBodiesAndRedaction(t *testing.T) {
 	if start["route"] != "/v1/hlj/order/:id" || start["path"] != "/v1/hlj/order/9" || start["method"] != "POST" {
 		t.Fatalf("start route fields %v", start)
 	}
+	if start["kind"] != KindAPI && start["kind"] != KindRPC && start["kind"] != KindTask {
+		t.Fatalf("kind missing or invalid: %v", start["kind"])
+	}
 	q, _ := start["query"].(map[string]any)
 	if q["page"] != "1" || q["token"] != RedactedValue {
 		t.Fatalf("query=%v", start["query"])
+	}
+	params, _ := start["params"].(map[string]any)
+	if params["id"] != "9" {
+		t.Fatalf("params=%v", start["params"])
+	}
+	headers, _ := start["headers"].(map[string]any)
+	if headers["Authorization"] != RedactedValue || headers["Cookie"] != RedactedValue {
+		t.Fatalf("sensitive headers not redacted: %v", headers)
+	}
+	if headers["Content-Type"] != "application/json; charset=utf-8" {
+		t.Fatalf("Content-Type should stay visible: %v", headers)
+	}
+	if headers["X-Request-Id"] != "given-id" {
+		t.Fatalf("X-Request-Id should stay visible: %v", headers)
 	}
 	rb, _ := start["req_body"].(map[string]any)
 	if rb["name"] != "latte" || rb["password"] != RedactedValue || rb["code"] != RedactedValue {
@@ -114,7 +133,8 @@ func TestAccessLogPairWithBodiesAndRedaction(t *testing.T) {
 	if nested["appSecret"] != RedactedValue || nested["list"].([]any)[0].(map[string]any)["newPassword"] != RedactedValue {
 		t.Fatalf("nested redaction %v", nested)
 	}
-	if strings.Contains(buf.String(), "p@ss") || strings.Contains(buf.String(), `"tok"`) || strings.Contains(buf.String(), "abc") {
+	if strings.Contains(buf.String(), "p@ss") || strings.Contains(buf.String(), `"tok"`) || strings.Contains(buf.String(), "abc") ||
+		strings.Contains(buf.String(), "super-secret") || strings.Contains(buf.String(), "session-value") {
 		t.Fatalf("secret leaked: %s", buf.String())
 	}
 	if end["status"] != float64(200) || end["user_id"] != "u-1" {
@@ -343,7 +363,7 @@ func TestRedactJSONText(t *testing.T) {
 }
 
 func TestIsSensitiveKey(t *testing.T) {
-	for _, k := range []string{"password", "newPassword", "app_secret", "Authorization", "X-Api-Key", "privateKey", "id_card", "cardNo", "otp", "refresh_token"} {
+	for _, k := range []string{"password", "newPassword", "app_secret", "Authorization", "Proxy-Authorization", "X-Api-Key", "privateKey", "id_card", "cardNo", "otp", "refresh_token"} {
 		if !IsSensitiveKey(k, false) {
 			t.Errorf("%s should be sensitive", k)
 		}
@@ -409,5 +429,100 @@ func TestLimitRequestBodyRejectsOversize(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Body.String() == "ok" {
 		t.Fatal("oversize body should not fully read as ok")
+	}
+}
+
+func TestAccessLogRequestHeadersAndParams(t *testing.T) {
+	var buf bytes.Buffer
+	r := newEngine(&buf, DefaultAccessLogConfig())
+	r.GET("/v1/user/:token/:id", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/user/secret-token/42", nil)
+	req.Header.Set("Authorization", "Bearer abcdef")
+	req.Header.Set("Cookie", "a=1")
+	req.Header.Set("Set-Cookie", "ignored-on-request")
+	req.Header.Set("Proxy-Authorization", "Basic hunter2")
+	req.Header.Set("X-Auth-Token", "tok-value")
+	req.Header.Set("X-Api-Key", "key-value")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-ID", "req-1")
+	req.Header.Add("X-Forwarded-For", "1.1.1.1")
+	req.Header.Add("X-Forwarded-For", "2.2.2.2")
+	req.Header.Set("X-Long", strings.Repeat("z", 300))
+	r.ServeHTTP(httptest.NewRecorder(), req)
+
+	start, _ := pair(t, &buf)
+	headers, _ := start["headers"].(map[string]any)
+	for _, k := range []string{"Authorization", "Cookie", "Set-Cookie", "Proxy-Authorization", "X-Auth-Token", "X-Api-Key"} {
+		if headers[k] != RedactedValue {
+			t.Fatalf("header %s=%v, want %s", k, headers[k], RedactedValue)
+		}
+	}
+	if headers["Content-Type"] != "application/json" {
+		t.Fatalf("Content-Type=%v", headers["Content-Type"])
+	}
+	if headers["X-Request-Id"] != "req-1" {
+		t.Fatalf("X-Request-Id=%v", headers["X-Request-Id"])
+	}
+	xff, ok := headers["X-Forwarded-For"].([]any)
+	if !ok || len(xff) != 2 || xff[0] != "1.1.1.1" || xff[1] != "2.2.2.2" {
+		t.Fatalf("multi-value header: %v (%T)", headers["X-Forwarded-For"], headers["X-Forwarded-For"])
+	}
+	long, _ := headers["X-Long"].(string)
+	if !strings.HasSuffix(long, "…") || len(long) != 256+len("…") {
+		t.Fatalf("long header not truncated: len=%d val=%q", len(long), long)
+	}
+	params, _ := start["params"].(map[string]any)
+	if params["token"] != RedactedValue || params["id"] != "42" {
+		t.Fatalf("params=%v", start["params"])
+	}
+	leaked := []string{"abcdef", "tok-value", "key-value", "hunter2", "ignored-on-request", "a=1"}
+	for _, secret := range leaked {
+		if strings.Contains(buf.String(), secret) {
+			t.Fatalf("secret %q leaked: %s", secret, buf.String())
+		}
+	}
+}
+
+func TestAccessLogRequestHeadersDisabled(t *testing.T) {
+	var buf bytes.Buffer
+	cfg := DefaultAccessLogConfig()
+	cfg.RequestHeaders = false
+	r := newEngine(&buf, cfg)
+	r.GET("/x", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	req := httptest.NewRequest(http.MethodGet, "/x?token=abc&page=1", nil)
+	req.Header.Set("Authorization", "Bearer hidden")
+	req.Header.Set("Content-Type", "application/json")
+	r.ServeHTTP(httptest.NewRecorder(), req)
+	start, _ := pair(t, &buf)
+	if _, ok := start["headers"]; ok {
+		t.Fatalf("headers must be omitted when disabled: %v", start)
+	}
+	q, _ := start["query"].(map[string]any)
+	if q["page"] != "1" || q["token"] != RedactedValue {
+		t.Fatalf("query redaction must still apply: %v", start["query"])
+	}
+	if strings.Contains(buf.String(), "hidden") || strings.Contains(buf.String(), "abc") {
+		t.Fatalf("secret leaked: %s", buf.String())
+	}
+}
+
+func TestAccessLogRequestHeadersViperFalse(t *testing.T) {
+	viper.Set("log.access.request_headers", false)
+	t.Cleanup(func() { viper.Set("log.access.request_headers", nil) })
+	var buf bytes.Buffer
+	Init("info", &buf)
+	r := gin.New()
+	r.Use(RequestLogger())
+	r.GET("/x", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set("Authorization", "Bearer hidden")
+	r.ServeHTTP(httptest.NewRecorder(), req)
+	start, _ := pair(t, &buf)
+	if _, ok := start["headers"]; ok {
+		t.Fatalf("viper request_headers=false still logged headers: %v", start)
+	}
+	if strings.Contains(buf.String(), "hidden") {
+		t.Fatalf("secret leaked: %s", buf.String())
 	}
 }
