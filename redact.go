@@ -21,7 +21,7 @@ var sensitiveExact = map[string]struct{}{
 	"secret":    {}, "appsecret": {}, "clientsecret": {}, "secretkey": {}, "apisecret": {},
 	"key": {}, "privatekey": {}, "apikey": {}, "apiv3key": {}, "apiv2key": {}, "mchkey": {},
 	"aeskey": {}, "encryptkey": {}, "signkey": {},
-	"authorization": {}, "cookie": {}, "setcookie": {},
+	"authorization": {}, "cookie": {}, "setcookie": {}, "proxyauthorization": {},
 	"otp": {}, "totp": {}, "otpcode": {}, "otpsecret": {}, "mfacode": {},
 	"urlotp": {}, "otpurl": {}, "otpuri": {}, "otpauth": {}, "otpauthurl": {}, "otpqr": {}, "otpqrcode": {}, "mfaurl": {},
 	"smscode": {}, "verifycode": {}, "verificationcode": {}, "captcha": {}, "authcode": {},

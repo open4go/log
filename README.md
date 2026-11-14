@@ -3,7 +3,7 @@
 > 仓库：https://github.com/open4go/log ｜ 模块：`github.com/open4go/log` ｜ Go 1.25.8 ｜ 最近提交：2026-10-08（最新 tag v0.0.23）｜ 仓库提交了 vendor（1756 个文件）
 
 ## 项目简介
-基于 logrus 的进程级 JSON 日志。`Log(ctx)` 自动附带 server、trace、ip、merchantId、operator 和构建元数据：`image`（`IMAGE_TAG`，否则 `SERVER_VERSION` / `APP_VERSION` / ldflags / `VERSION` 文件）、`git_commit`（`GIT_COMMIT`，否则 ldflags 或 `runtime/debug` 的 `vcs.revision`）、`git_branch`、`build_time`、`instance`（`HOSTNAME`）。`Init` 会重新读取这些环境变量，所以进程启动后（以及测试里 `Setenv` 之后）注入的值也会生效。hook 在每条日志上写短字段 `caller`（如 `handler.go:88`），并跳过 `open4go/log`、logrus、runtime 以及 `rest.MakeError` / `MakeResponse` 包装帧，让错误行指向业务代码。默认只有 panic/fatal 带堆栈（`log.stacktrace=error` 可改为 error 也带）；提供 Gin 的 `TraceMiddleware` 和 `RequestLogger`。另外包含登录日志、操作日志两个 Mongo 模型。
+基于 logrus 的进程级 JSON 日志。`Log(ctx)` 自动附带 server、**kind**（`api` / `rpc` / `task`）、trace、ip、merchantId、operator 和构建元数据：`image`（`IMAGE_TAG`，否则 `SERVER_VERSION` / `APP_VERSION` / ldflags / `VERSION` 文件）、`git_commit`（`GIT_COMMIT`，否则 ldflags 或 `runtime/debug` 的 `vcs.revision`）、`git_branch`、`build_time`、`instance`（`HOSTNAME`）。`Init` 会重新读取这些环境变量和 kind，所以进程启动后（以及测试里 `Setenv` 之后）注入的值也会生效。hook 在每条日志上写短字段 `caller`（如 `handler.go:88`），并跳过 `open4go/log`、logrus、runtime 以及 `rest.MakeError` / `MakeResponse` 包装帧，让错误行指向业务代码。默认只有 panic/fatal 带堆栈（`log.stacktrace=error` 可改为 error 也带）；提供 Gin 的 `TraceMiddleware` 和 `RequestLogger`。另外包含登录日志、操作日志两个 Mongo 模型。
 
 ## 目录结构
 ```
@@ -26,8 +26,19 @@ log/
 | `Error/Errorf(ctx, err, ...)`、`ErrorWithStack`（别名）、`WarnWithStack/WarnfWithStack` | 带堆栈 |
 | `NewTraceID()`、`WithTraceID`、`WithIP`、`Inject`、`TraceID(ctx)`、`ClientIP(ctx)` | 同时写入类型化 key 和旧的字符串 key（`"traceid"`、`"ip"`） |
 | `TraceMiddleware()` | 复用入站的 `X-Request-ID`/`X-Trace-ID`，没有就生成；写进 ctx、gin（`RequestID`、`log`）和响应头 |
-| `RequestLogger()` | 每个请求一行访问日志；跳过 /healthz 等探活路径和 `*/metrics`；超过 `server.maxLatency`（ms）记 Warning |
+| `RequestLogger()` | 每个请求一对 `api-start` / `api-end` 访问日志；start 含 query、path params、headers（敏感值脱敏为 `***`）和请求体；跳过 /healthz 等探活路径和 `*/metrics`；超过 `server.maxLatency`（ms）记 Warning。可用 `log.access.request_headers=false` 关闭 headers |
 | `model/operation.Model` | 审计字段：Service/Module/Action/Before/After/Summary/TraceID/LatencyMs 等，集合名 `auth_operation_log` |
+
+## 字段 `kind`（服务类型）
+
+每条 JSON 日志都带有 `kind`，取值只能是 `api`、`rpc` 或 `task`（小写），紧跟在 `server` 之后，方便在 SLS 上按服务类型建索引（建议别名「服务类型」，检索用 `json_extract_scalar(message, '$.kind')`）。判定顺序：
+
+1. 显式配置：环境变量 `SERVER_KIND` / `LOG_KIND`，或 viper `server.kind` / `log.kind`（去空白并转小写；非法值忽略）。
+2. `COMPOSE_PROJECT_NAME`：`rpc-publish` 或以 `rpc-` 开头 → `rpc`；`task-publish` 或以 `task-` 开头 → `task`。
+3. 主机名（Docker 下即容器名）：含 `rpc-publish`、`-rpc-`、前缀 `rpc-`、或后缀 `-rpc` / `-rpc-<数字>` → `rpc`；对 `task` 使用同样规则。`share-stack-auth-1` 不会被判成 `task`（没有 `-task-`）。现网对应关系：`share-stack` / `mini` / `static-stack` 下的 API 容器 → `api`；`rpc-publish-*-rpc-*` → `rpc`；`task-publish-*-task-*` → `task`。
+4. 默认 `api`。
+
+结果在 `Init` 时缓存，与 `image` 等构建元数据相同。
 
 ## 使用示例
 ```go

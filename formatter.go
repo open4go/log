@@ -13,6 +13,7 @@ import (
 // every record can be read left to right without hunting for them.
 var headFields = []string{
 	"server",
+	"kind",
 	"trace",
 }
 
@@ -33,6 +34,9 @@ var contextFields = []string{
 // static build metadata.
 var tailFields = []string{
 	"query",
+	"params",
+	"headers",
+	"user_agent",
 	"req_body",
 	"resp_body",
 	fieldStack,
@@ -46,7 +50,7 @@ var tailFields = []string{
 var reservedKeys = map[string]struct{}{"time": {}, "level": {}, "msg": {}}
 
 // orderedJSONFormatter writes one JSON object per line with a stable key
-// order: time, level, server, trace, msg, error, caller, request
+// order: time, level, server, kind, trace, msg, error, caller, request
 // context, remaining fields (sorted), then payloads / stack / build meta.
 type orderedJSONFormatter struct {
 	TimestampFormat string

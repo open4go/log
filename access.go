@@ -38,6 +38,9 @@ type AccessLogConfig struct {
 	// RequestBody / ResponseBody include payloads (default true).
 	RequestBody  bool
 	ResponseBody bool
+	// RequestHeaders includes request headers on api-start (default true).
+	// Sensitive values (Authorization, Cookie, tokens, …) are redacted.
+	RequestHeaders bool
 	// ResponseBodyOnSuccess also logs the response body of 2xx/3xx replies
 	// (default false: success bodies are large and rarely needed; error
 	// responses (>=400), panics and slow requests always keep the body).
@@ -69,12 +72,13 @@ var DefaultSkipPaths = []string{"/healthz", "/readyz", "/health", "/ping", "/fav
 // DefaultAccessLogConfig returns the defaults described on AccessLogConfig.
 func DefaultAccessLogConfig() AccessLogConfig {
 	return AccessLogConfig{
-		Enabled:      true,
-		RequestBody:  true,
-		ResponseBody: true,
-		MaxBodyBytes: 4096,
-		SkipPaths:    append([]string(nil), DefaultSkipPaths...),
-		SkipOptions:  true,
+		Enabled:        true,
+		RequestBody:    true,
+		ResponseBody:   true,
+		RequestHeaders: true,
+		MaxBodyBytes:   4096,
+		SkipPaths:      append([]string(nil), DefaultSkipPaths...),
+		SkipOptions:    true,
 	}
 }
 
@@ -82,6 +86,7 @@ func DefaultAccessLogConfig() AccessLogConfig {
 //
 //	log.access.enabled        bool   (default true)
 //	log.access.request_body   bool   (default true)
+//	log.access.request_headers bool  (default true)
 //	log.access.response_body  bool   (default true)
 //	log.access.response_body_on_success bool (default false)
 //	log.access.max_body       int    bytes (default 4096)
@@ -97,6 +102,9 @@ func AccessLogConfigFromViper() AccessLogConfig {
 	}
 	if viper.IsSet("log.access.request_body") {
 		cfg.RequestBody = viper.GetBool("log.access.request_body")
+	}
+	if viper.IsSet("log.access.request_headers") {
+		cfg.RequestHeaders = viper.GetBool("log.access.request_headers")
 	}
 	if viper.IsSet("log.access.response_body") {
 		cfg.ResponseBody = viper.GetBool("log.access.response_body")
@@ -135,7 +143,7 @@ func AccessLogConfigFromViper() AccessLogConfig {
 //	r.Use(log.Recovery())
 //
 // Every request writes exactly two info lines sharing one trace id:
-// "api-start" (method, route, query, request body) and "api-end"
+// "api-start" (method, route, query, headers, path params, request body) and "api-end"
 // (status, latency, response body, merchant / operator after auth).
 // api-end is written even when a handler aborts or panics.
 func RequestLogger() gin.HandlerFunc {
@@ -197,6 +205,14 @@ func AccessLogger(cfg AccessLogConfig) gin.HandlerFunc {
 		}
 		if q := redactValues(c.Request.URL.Query(), true); len(q) > 0 {
 			startFields["query"] = q
+		}
+		if p := redactParams(c.Params); len(p) > 0 {
+			startFields["params"] = p
+		}
+		if cfg.RequestHeaders {
+			if h := redactHeaders(c.Request.Header); len(h) > 0 {
+				startFields["headers"] = h
+			}
 		}
 		if ua := c.Request.UserAgent(); ua != "" {
 			startFields["user_agent"] = truncate(ua, 256)
@@ -414,6 +430,71 @@ func orUnknown(s string) string {
 		return "unknown content type"
 	}
 	return s
+}
+
+// redactHeaders copies request headers for api-start. Sensitive names
+// (Authorization, Cookie, Set-Cookie, Proxy-Authorization, and any key
+// already covered by IsSensitiveKey) keep the header but replace the
+// value with RedactedValue. Long non-sensitive values are truncated;
+// repeated values are kept as a slice.
+func redactHeaders(h http.Header) map[string]any {
+	if len(h) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(h))
+	for k, vs := range h {
+		if isSensitiveHeader(k) {
+			out[k] = RedactedValue
+			continue
+		}
+		if len(vs) == 1 {
+			v := vs[0]
+			if hasSecretURI(v) {
+				out[k] = RedactedValue
+				continue
+			}
+			out[k] = truncate(v, 256)
+			continue
+		}
+		cp := make([]string, len(vs))
+		for i, v := range vs {
+			if hasSecretURI(v) {
+				cp[i] = RedactedValue
+				continue
+			}
+			cp[i] = truncate(v, 256)
+		}
+		out[k] = cp
+	}
+	return out
+}
+
+func isSensitiveHeader(name string) bool {
+	if IsSensitiveKey(name, true) {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "authorization", "cookie", "set-cookie", "proxy-authorization":
+		return true
+	default:
+		return false
+	}
+}
+
+// redactParams copies gin path params, masking sensitive names.
+func redactParams(params gin.Params) map[string]any {
+	if len(params) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(params))
+	for _, p := range params {
+		if IsSensitiveKey(p.Key, true) || hasSecretURI(p.Value) {
+			out[p.Key] = RedactedValue
+			continue
+		}
+		out[p.Key] = p.Value
+	}
+	return out
 }
 
 func truncate(s string, n int) string {

@@ -45,6 +45,7 @@ func init() {
 	logger.AddHook(locationHook{})
 	current.Store(loadSettings())
 	refreshMeta()
+	refreshKind()
 }
 
 func jsonFormatter() logrus.Formatter {
@@ -109,6 +110,8 @@ func ParseLevel(logLevel string) logrus.Level {
 //	git_branch ← GIT_BRANCH, else ldGitBranch
 //	build_time ← BUILD_TIME, else ldBuildTime, else vcs.time
 //	instance   ← HOSTNAME
+//	kind       ← SERVER_KIND / LOG_KIND, else server.kind / log.kind,
+//	             else COMPOSE_PROJECT_NAME / hostname (api, rpc, or task)
 func Init(logLevel string, output io.Writer) {
 	if output != nil {
 		logger.SetOutput(output)
@@ -128,6 +131,7 @@ func Init(logLevel string, output io.Writer) {
 	// package import (compose env is actually present at import, but tests
 	// and late config load can set them afterwards) are not sticky.
 	refreshMeta()
+	refreshKind()
 }
 
 // SetLevel changes the level at runtime (debug | info | warn | error).
@@ -141,7 +145,7 @@ func Logger() *logrus.Logger {
 }
 
 // Log is the common entry for Info / Debug / Warn / Error.
-// It attaches server, trace, ip, merchant and operator when present.
+// It attaches server, kind, trace, ip, merchant and operator when present.
 // A short caller ("pkg/file.go:line") is filled when the line is written.
 // Stack traces are only attached to panic / fatal lines (see Init).
 // Do not call Fatal from request handlers — Fatal exits the process.
@@ -206,8 +210,9 @@ func errorEntry(ctx context.Context, err error) *logrus.Entry {
 }
 
 func getBaseEntry(ctx context.Context) *logrus.Entry {
-	fields := make(logrus.Fields, 12)
+	fields := make(logrus.Fields, 13)
 	fields["server"] = viper.GetString("server.name")
+	fields["kind"] = Kind()
 
 	if traceID := TraceID(ctx); traceID != "" {
 		fields["trace"] = traceID
