@@ -502,7 +502,8 @@ func TestAccessLogRequestHeadersDisabled(t *testing.T) {
 	if q["page"] != "1" || q["token"] != RedactedValue {
 		t.Fatalf("query redaction must still apply: %v", start["query"])
 	}
-	if strings.Contains(buf.String(), "hidden") || strings.Contains(buf.String(), "abc") {
+	// 注意：随机 trace id 是十六进制串，可能恰好包含 "abc"，因此按 JSON 值（带引号）匹配，避免偶发失败。
+	if strings.Contains(buf.String(), "hidden") || strings.Contains(buf.String(), `"abc"`) || strings.Contains(buf.String(), "token=abc") {
 		t.Fatalf("secret leaked: %s", buf.String())
 	}
 }
